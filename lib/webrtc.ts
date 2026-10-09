@@ -15,7 +15,12 @@ interface PeerCallbacks {
 }
 
 const ICE_CONFIG: RTCConfiguration = {
-  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:global.stun.twilio.com:3478" },
+  ],
 };
 
 export class PeerSession {
@@ -43,17 +48,25 @@ export class PeerSession {
     this.pc.onnegotiationneeded = async () => {
       try {
         this.makingOffer = true;
-        await this.pc.setLocalDescription();
+        const offer = await this.pc.createOffer();
+        await this.pc.setLocalDescription(offer);
         if (this.pc.localDescription) {
           this.cb.onSignal("offer", JSON.stringify(this.pc.localDescription));
         }
+      } catch (err) {
+        console.error("Negotiation error:", err);
       } finally {
         this.makingOffer = false;
       }
     };
 
-    this.pc.ontrack = ({ streams }) => {
-      this.cb.onRemoteStream(streams[0] ?? null);
+    this.pc.ontrack = (event) => {
+      if (event.streams && event.streams[0]) {
+        this.cb.onRemoteStream(event.streams[0]);
+      } else if (event.track) {
+        const stream = new MediaStream([event.track]);
+        this.cb.onRemoteStream(stream);
+      }
     };
 
     this.pc.onconnectionstatechange = () => {
@@ -110,10 +123,11 @@ export class PeerSession {
     this.ignoreOffer = !this.polite && offerCollision;
     if (this.ignoreOffer) return;
 
+    await this.pc.setRemoteDescription(new RTCSessionDescription(desc));
     await this.flushPendingCandidates();
-    await this.pc.setRemoteDescription(desc);
     if (desc.type === "offer") {
-      await this.pc.setLocalDescription();
+      const answer = await this.pc.createAnswer();
+      await this.pc.setLocalDescription(answer);
       if (this.pc.localDescription) {
         this.cb.onSignal("answer", JSON.stringify(this.pc.localDescription));
       }
@@ -122,11 +136,11 @@ export class PeerSession {
 
   private async flushPendingCandidates() {
     if (this.pendingCandidates.length === 0) return;
-    const queued = this.pendingCandidates;
+    const queued = [...this.pendingCandidates];
     this.pendingCandidates = [];
     for (const candidate of queued) {
       try {
-        await this.pc.addIceCandidate(candidate);
+        await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
       } catch {}
     }
   }

@@ -1,13 +1,11 @@
 import type { NextRequest } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { applyPrivacyOffset, isValidLatLng } from "@/lib/geo";
+import { isValidLatLng } from "@/lib/geo";
+import { registerPresence } from "@/lib/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// POST /api/join — body { id, lat, lng } (raw coords).
-// Applies a 1–3 km privacy offset and upserts the presence row. Raw
-// coordinates are never stored.
+// POST /api/join — body { id, lat, lng, signal?, tone?, nickname? }
 export async function POST(request: NextRequest) {
   let body: unknown;
   try {
@@ -16,7 +14,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "invalid body" }, { status: 400 });
   }
 
-  const { id, lat, lng } = (body ?? {}) as Record<string, unknown>;
+  const { id, lat, lng, signal, tone, nickname } = (body ?? {}) as Record<string, unknown>;
 
   if (typeof id !== "string" || id.length < 8 || id.length > 64) {
     return Response.json({ error: "invalid id" }, { status: 400 });
@@ -25,23 +23,34 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "invalid coordinates" }, { status: 400 });
   }
 
-  const offset = applyPrivacyOffset(lat as number, lng as number);
+  const validSignal =
+    signal === "open" || signal === "curious" || signal === "quiet"
+      ? (signal as "open" | "curious" | "quiet")
+      : "curious";
+  const validTone =
+    tone === "green" || tone === "violet" || tone === "cyan" || tone === "rose" || tone === "amber"
+      ? (tone as "green" | "violet" | "cyan" | "rose" | "amber")
+      : "green";
+  const validNickname = typeof nickname === "string" ? nickname.slice(0, 24) : "";
 
-  await prisma.presence.upsert({
-    where: { id },
-    create: {
-      id,
-      lat: offset.lat,
-      lng: offset.lng,
-      busy: false,
-      lastSeen: new Date(),
-    },
-    update: {
-      lat: offset.lat,
-      lng: offset.lng,
-      lastSeen: new Date(),
-    },
+  const record = await registerPresence(id, lat as number, lng as number, {
+    signal: validSignal,
+    tone: validTone,
+    nickname: validNickname,
   });
 
-  return Response.json({ ok: true });
+  return Response.json({
+    ok: true,
+    me: {
+      id: record.id,
+      lat: record.lat,
+      lng: record.lng,
+      city: record.city,
+      country: record.country,
+      signal: record.signal,
+      tone: record.tone,
+      nickname: record.nickname,
+    },
+  });
 }
+

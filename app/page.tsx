@@ -19,8 +19,24 @@ type Conn =
   | { kind: "connected"; peerId: string };
 
 type VideoState = "none" | "requesting" | "incoming" | "active";
+type Signal = "open" | "curious" | "quiet";
+type Tone = "green" | "violet" | "cyan" | "rose" | "amber";
 
 const REQUEST_TIMEOUT_MS = 30_000;
+
+const TONE_COLORS: Record<Tone, string> = {
+  green:  "#22c55e",
+  violet: "#a855f7",
+  cyan:   "#06b6d4",
+  rose:   "#f43f5e",
+  amber:  "#f59e0b",
+};
+
+const SIGNAL_EMOJI: Record<Signal, string> = {
+  open: "💬",
+  curious: "✨",
+  quiet: "🌙",
+};
 
 export default function Home() {
   const [phase, setPhase] = useState<"gate" | "live">("gate");
@@ -30,9 +46,12 @@ export default function Home() {
   const [notice, setNotice] = useState<string | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-  const [myLocation, setMyLocation] = useState<{ lat: number; lng: number } | null>(
-    null,
-  );
+  const [myLocation, setMyLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [mySignal, setMySignal] = useState<Signal>("curious");
+  const [myTone, setMyTone] = useState<Tone>("violet");
+  const [myNickname, setMyNickname] = useState<string>("");
+  const [myCityInfo, setMyCityInfo] = useState<{ city: string; country: string } | null>(null);
+  const [showPeople, setShowPeople] = useState(false);
 
   const [conn, _setConn] = useState<Conn>({ kind: "idle" });
   const connRef = useRef<Conn>(conn);
@@ -270,6 +289,7 @@ export default function Home() {
     processSignalRef.current = processSignal;
   });
 
+  // Poll loop — heartbeat + peer list + signals
   useEffect(() => {
     if (phase !== "live" || !sessionId) return;
     let active = true;
@@ -277,7 +297,13 @@ export default function Home() {
 
     const tick = async () => {
       try {
-        const data = await poll(sessionId);
+        const data = await poll(sessionId, {
+          lat: myLocation?.lat,
+          lng: myLocation?.lng,
+          signal: mySignal,
+          tone: myTone,
+          nickname: myNickname,
+        });
         if (!active) return;
         setPeers(data.peers);
         for (const s of data.signals) processSignalRef.current(s);
@@ -290,7 +316,8 @@ export default function Home() {
       active = false;
       if (timer) clearTimeout(timer);
     };
-  }, [phase, sessionId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, sessionId, mySignal, myTone, myNickname]);
 
   useEffect(() => {
     if (!sessionId || phase !== "live") return;
@@ -303,9 +330,15 @@ export default function Home() {
     };
   }, [sessionId, phase]);
 
-  async function handleReady(lat: number, lng: number) {
+  async function handleReady(lat: number, lng: number, signal: Signal, tone: Tone, nickname: string) {
+    setMySignal(signal);
+    setMyTone(tone);
+    setMyNickname(nickname);
     setMyLocation({ lat, lng });
-    await join(sessionId, lat, lng);
+    const res = await join(sessionId, lat, lng, { signal, tone, nickname });
+    if (res.me) {
+      setMyCityInfo({ city: res.me.city, country: res.me.country });
+    }
     setPhase("live");
   }
 
@@ -314,6 +347,7 @@ export default function Home() {
   }
 
   const inChat = conn.kind === "connecting" || conn.kind === "connected";
+  const accentColor = TONE_COLORS[myTone];
 
   return (
     <main className="fixed inset-0 overflow-hidden">
@@ -324,24 +358,101 @@ export default function Home() {
         canConnect={conn.kind === "idle"}
       />
 
+      {/* ── Top bar ── */}
+      <div
+        className="absolute inset-x-0 top-0 z-20 flex items-center justify-between px-4 py-3"
+        style={{
+          background: "linear-gradient(to bottom, rgba(5,5,8,0.88) 0%, transparent 100%)",
+        }}
+      >
+        <div className="flex items-center gap-2">
+          <span
+            className="h-2 w-2 rounded-full"
+            style={{ background: accentColor, boxShadow: `0 0 8px ${accentColor}` }}
+          />
+          <span className="text-sm font-semibold text-white">Pulse</span>
+          {myCityInfo && (
+            <span className="text-xs text-zinc-500">
+              · {myCityInfo.city}, {myCityInfo.country}
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          {/* My signal badge */}
+          <div
+            className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-white"
+            style={{ background: `${accentColor}22`, border: `1px solid ${accentColor}55` }}
+          >
+            <span>{SIGNAL_EMOJI[mySignal]}</span>
+            <span className="capitalize">{mySignal}</span>
+          </div>
+
+          {/* People nearby toggle */}
+          <button
+            onClick={() => setShowPeople((p) => !p)}
+            className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-zinc-300 transition hover:text-white"
+            style={{
+              background: showPeople ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.05)",
+              border: "1px solid rgba(255,255,255,0.08)",
+            }}
+          >
+            <span>👥</span>
+            <span>{peers.length}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* ── Notices ── */}
       {notice && (
-        <div className="absolute left-1/2 top-20 z-30 -translate-x-1/2 rounded-full bg-zinc-800/90 px-4 py-2 text-sm text-zinc-100 shadow-lg backdrop-blur">
+        <div
+          className="absolute left-1/2 top-16 z-30 -translate-x-1/2 rounded-full px-4 py-2 text-sm text-zinc-100 shadow-lg"
+          style={{
+            background: "rgba(12, 11, 22, 0.92)",
+            border: "1px solid rgba(255,255,255,0.1)",
+            backdropFilter: "blur(12px)",
+            animation: "float-in 0.3s ease",
+          }}
+        >
           {notice}
         </div>
       )}
 
       {conn.kind === "requesting" && (
-        <div className="absolute left-1/2 top-20 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full bg-zinc-800/90 px-4 py-2 text-sm text-zinc-100 shadow-lg backdrop-blur">
-          <span>Requesting connection…</span>
+        <div
+          className="absolute left-1/2 top-16 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full px-4 py-2 text-sm text-zinc-100 shadow-lg"
+          style={{
+            background: "rgba(12, 11, 22, 0.92)",
+            border: "1px solid rgba(255,255,255,0.1)",
+            backdropFilter: "blur(12px)",
+          }}
+        >
+          <span className="h-2 w-2 animate-pulse rounded-full" style={{ background: accentColor }} />
+          <span>Connecting…</span>
           <button
             onClick={cancelRequest}
-            className="rounded-full bg-zinc-700 px-3 py-1 text-xs hover:bg-zinc-600"
+            className="rounded-full border border-zinc-700 px-3 py-1 text-xs hover:border-zinc-500"
           >
             Cancel
           </button>
         </div>
       )}
 
+      {/* ── People nearby panel ── */}
+      {showPeople && !inChat && (
+        <PeoplePanel
+          peers={peers}
+          onConnect={(id) => {
+            setShowPeople(false);
+            requestConnection(id);
+          }}
+          canConnect={conn.kind === "idle"}
+          onClose={() => setShowPeople(false)}
+          accentColor={accentColor}
+        />
+      )}
+
+      {/* ── Incoming connection ── */}
       {conn.kind === "incoming" && (
         <ConnectionPrompt
           title="A stranger wants to connect"
@@ -352,6 +463,7 @@ export default function Home() {
         />
       )}
 
+      {/* ── Chat panel ── */}
       {inChat && (
         <ChatPanel
           messages={messages}
@@ -363,11 +475,19 @@ export default function Home() {
           }}
           onStartVideo={startVideoRequest}
           onEnd={endConnection}
+          accentColor={accentColor}
         />
       )}
 
       {video === "requesting" && (
-        <div className="absolute bottom-24 left-1/2 z-30 -translate-x-1/2 rounded-full bg-zinc-800/90 px-4 py-2 text-sm text-zinc-100 shadow-lg backdrop-blur">
+        <div
+          className="absolute bottom-24 left-1/2 z-30 -translate-x-1/2 rounded-full px-4 py-2 text-sm text-zinc-100 shadow-lg"
+          style={{
+            background: "rgba(12, 11, 22, 0.92)",
+            border: "1px solid rgba(255,255,255,0.1)",
+            backdropFilter: "blur(12px)",
+          }}
+        >
           Waiting for stranger to accept video…
         </div>
       )}
@@ -391,5 +511,134 @@ export default function Home() {
         />
       )}
     </main>
+  );
+}
+
+// ── People nearby sidebar ──
+function PeoplePanel({
+  peers,
+  onConnect,
+  canConnect,
+  onClose,
+  accentColor,
+}: {
+  peers: PeerDot[];
+  onConnect: (id: string) => void;
+  canConnect: boolean;
+  onClose: () => void;
+  accentColor: string;
+}) {
+  const TONE_COLORS: Record<string, string> = {
+    green:  "#22c55e",
+    violet: "#a855f7",
+    cyan:   "#06b6d4",
+    rose:   "#f43f5e",
+    amber:  "#f59e0b",
+  };
+  const SIGNAL_EMOJI: Record<string, string> = {
+    open: "💬", curious: "✨", quiet: "🌙",
+  };
+
+  return (
+    <div
+      className="absolute inset-y-0 right-0 z-20 flex w-full max-w-xs flex-col"
+      style={{
+        background: "rgba(8, 7, 16, 0.90)",
+        borderLeft: "1px solid rgba(255,255,255,0.07)",
+        backdropFilter: "blur(20px)",
+        animation: "slide-in-right 0.25s ease",
+      }}
+    >
+      <div
+        className="flex items-center justify-between px-4 py-3.5"
+        style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
+      >
+        <span className="text-sm font-semibold text-white">
+          People nearby{" "}
+          <span className="ml-1 text-xs font-normal text-zinc-500">({peers.length})</span>
+        </span>
+        <button
+          onClick={onClose}
+          className="text-zinc-600 transition hover:text-zinc-300 text-lg leading-none"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-3">
+        {peers.length === 0 && (
+          <p className="mt-8 text-center text-sm text-zinc-600">
+            No one else is online yet.
+            <br />
+            <span className="text-xs">Share the link to invite others.</span>
+          </p>
+        )}
+        {peers.map((peer) => {
+          const color = peer.tone ? (TONE_COLORS[peer.tone] ?? accentColor) : accentColor;
+          const emoji = SIGNAL_EMOJI[peer.signal ?? "curious"] ?? "✨";
+          return (
+            <div
+              key={peer.id}
+              className="mb-2 rounded-xl p-3 transition"
+              style={{
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid rgba(255,255,255,0.06)",
+              }}
+            >
+              <div className="flex items-center gap-2.5">
+                {/* Avatar dot */}
+                <div
+                  className="h-8 w-8 flex-shrink-0 rounded-full"
+                  style={{
+                    background: color,
+                    boxShadow: `0 0 10px ${color}66`,
+                    opacity: peer.busy ? 0.4 : 1,
+                  }}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm font-medium text-white truncate">
+                      {peer.nickname || "Anonymous"}
+                    </span>
+                    {peer.busy && (
+                      <span className="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">
+                        busy
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-zinc-500 flex items-center gap-1 mt-0.5">
+                    <span>{emoji}</span>
+                    <span className="capitalize">{peer.signal ?? "curious"}</span>
+                    {peer.city && <span>· {peer.city}</span>}
+                  </div>
+                  {peer.distance && (
+                    <div className="text-xs text-zinc-600 mt-0.5">{peer.distance}</div>
+                  )}
+                </div>
+
+                {!peer.busy && canConnect && (
+                  <button
+                    onClick={() => onConnect(peer.id)}
+                    className="flex-shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold text-white transition hover:brightness-110"
+                    style={{ background: color }}
+                  >
+                    Connect
+                  </button>
+                )}
+              </div>
+
+              {peer.prompt && (
+                <p
+                  className="mt-2 rounded-lg p-2 text-xs text-zinc-400 italic"
+                  style={{ background: "rgba(255,255,255,0.03)" }}
+                >
+                  "{peer.prompt}"
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

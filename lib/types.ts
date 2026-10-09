@@ -15,6 +15,17 @@ export interface PeerDot {
   lat: number;
   lng: number;
   busy: boolean;
+  signal?: "open" | "curious" | "quiet";
+  tone?: "green" | "violet" | "cyan" | "rose" | "amber";
+  nickname?: string;
+  city?: string;
+  country?: string;
+  prompt?: string;
+  tags?: string[];
+  distance?: string;
+  distanceKm?: number;
+  match?: number;
+  energy?: string;
 }
 
 export interface SignalMsg {
@@ -30,3 +41,4 @@ export interface PollResponse {
   peers: PeerDot[];
   signals: SignalMsg[];
 }
+

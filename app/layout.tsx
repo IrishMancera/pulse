@@ -13,8 +13,15 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Pulse",
-  description: "A living globe of anonymous strangers. Tap a dot, start talking.",
+  title: "Pulse — Connect with strangers worldwide",
+  description:
+    "A real-time living globe of anonymous strangers. Drop onto the map, pick your signal, and start talking — no sign-up, no history, no traces.",
+  keywords: ["anonymous chat", "real-time", "global", "strangers", "video call", "map"],
+  openGraph: {
+    title: "Pulse — Connect with strangers worldwide",
+    description: "Drop onto the live map and connect with anyone, anywhere. Ephemeral by design.",
+    type: "website",
+  },
 };
 
 export default function RootLayout({
