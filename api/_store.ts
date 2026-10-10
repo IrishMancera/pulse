@@ -332,6 +332,7 @@ async function kvDrainSignals(toId: string): Promise<any[]> {
   const items = await store.lrange(key, 0, count - 1);
   if (items && items.length > 0) {
     await store.del(key);
+    items.reverse();
     const now = Date.now();
     for (const item of items) {
       try {

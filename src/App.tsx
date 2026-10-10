@@ -15,11 +15,15 @@ type IconName =
   | "lock"
   | "message"
   | "mic"
+  | "micOff"
   | "more"
+  | "phone"
+  | "phoneOff"
   | "pin"
   | "send"
   | "spark"
-  | "users";
+  | "users"
+  | "videoOff";
 
 export type AvatarTone = "green" | "violet" | "cyan" | "rose" | "amber";
 export type IdentityMode = "anonymous" | "color" | "nickname";
@@ -103,11 +107,15 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
     lock: <><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></>,
     message: <path d="M20 15a3 3 0 0 1-3 3H9l-5 3v-6a3 3 0 0 1-1-2V7a3 3 0 0 1 3-3h11a3 3 0 0 1 3 3Z" />,
     mic: <><rect x="9" y="3" width="6" height="12" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></>,
+    micOff: <><line x1="1" y1="1" x2="23" y2="23" /><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" /><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" /><line x1="12" y1="19" x2="12" y2="22" /></>,
     more: <><circle cx="5" cy="12" r="1" fill="currentColor" /><circle cx="12" cy="12" r="1" fill="currentColor" /><circle cx="19" cy="12" r="1" fill="currentColor" /></>,
+    phone: <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />,
+    phoneOff: <><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91" /><line x1="1" y1="1" x2="23" y2="23" /></>,
     pin: <><path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="2.5" /></>,
     send: <><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></>,
     spark: <><path d="m12 3 1.4 4.1L17 9l-3.6 1.9L12 15l-1.4-4.1L7 9l3.6-1.9Z" /><path d="m5 15 .8 2.2L8 18l-2.2.8L5 21l-.8-2.2L2 18l2.2-.8Z" /></>,
     users: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8" /></>,
+    videoOff: <><path d="m16 16 4.5 2.5V6l-4.5 2.5" /><rect x="3" y="6" width="13" height="12" rx="2" /><line x1="2" y1="2" x2="22" y2="22" /></>,
   };
 
   return (
@@ -584,38 +592,72 @@ function ChatPanel({
   person,
   messages,
   onSendMessage,
+  onStartAudioCall,
+  onEndAudioCall,
+  callActive,
   onToggleVideo,
   videoActive,
   localStream,
   remoteStream,
   onClose,
+  isConnecting,
 }: {
   person: Person;
   messages: Message[];
   onSendMessage: (text: string) => void;
+  onStartAudioCall: () => void;
+  onEndAudioCall: () => void;
+  callActive: boolean;
   onToggleVideo: () => void;
   videoActive: boolean;
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
   onClose: () => void;
+  isConnecting: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const [safetyOpen, setSafetyOpen] = useState(false);
   const [micMuted, setMicMuted] = useState(false);
+  const [cameraOff, setCameraOff] = useState(false);
+  const [showChatInVideo, setShowChatInVideo] = useState(false);
+  const [callDuration, setCallDuration] = useState(0);
+
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
 
+  // Call duration timer
+  useEffect(() => {
+    if (!callActive && !videoActive) {
+      setCallDuration(0);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setCallDuration((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [callActive, videoActive]);
+
+  // Bind local video
   useEffect(() => {
     if (localVideoRef.current && localStream) {
       localVideoRef.current.srcObject = localStream;
     }
   }, [localStream, videoActive]);
 
+  // Bind remote video
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
       remoteVideoRef.current.srcObject = remoteStream;
     }
   }, [remoteStream, videoActive]);
+
+  // Bind remote audio (always active so voice is heard regardless of view)
+  useEffect(() => {
+    if (remoteAudioRef.current && remoteStream) {
+      remoteAudioRef.current.srcObject = remoteStream;
+    }
+  }, [remoteStream]);
 
   function submitMessage(e: FormEvent) {
     e.preventDefault();
@@ -633,23 +675,67 @@ function ChatPanel({
     }
   }
 
+  function toggleCamera() {
+    if (localStream) {
+      localStream.getVideoTracks().forEach((track) => {
+        track.enabled = !track.enabled;
+      });
+      setCameraOff(!cameraOff);
+    }
+  }
+
+  const formattedTime = `${Math.floor(callDuration / 60)
+    .toString()
+    .padStart(2, "0")}:${(callDuration % 60).toString().padStart(2, "0")}`;
+
   return (
     <section className="chat-panel" aria-label={`Private chat with ${person.city}`}>
+      {/* Hidden background audio sink for remote audio */}
+      <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: "none" }} />
+
       <div className="chat-head">
         <div className="avatar"><AlienFace tone={person.tone} /></div>
         <div className="chat-identity">
           <strong>{person.nickname || "Anonymous stranger"}</strong>
-          <span><i /> Near {person.city} · peer-to-peer</span>
+          <span>
+            <i style={{ background: isConnecting ? "var(--amber)" : "var(--green)" }} />
+            {isConnecting
+              ? "Connecting WebRTC…"
+              : callActive
+              ? `Voice call (${formattedTime})`
+              : videoActive
+              ? `Live video (${formattedTime})`
+              : `Near ${person.city} · live peer-to-peer`}
+          </span>
         </div>
-        <button className={`icon-button ${videoActive ? "active" : ""}`} onClick={onToggleVideo} title="Toggle video call">
-          <Icon name="camera" />
+
+        {/* Audio call toggle */}
+        <button
+          className={`icon-button ${callActive ? "active" : ""}`}
+          onClick={callActive ? onEndAudioCall : onStartAudioCall}
+          title={callActive ? "End voice call" : "Start voice call"}
+          style={callActive ? { color: "var(--green)", borderColor: "var(--green)" } : {}}
+        >
+          <Icon name={callActive ? "phoneOff" : "phone"} size={16} />
         </button>
+
+        {/* Video call toggle */}
+        <button
+          className={`icon-button ${videoActive ? "active" : ""}`}
+          onClick={onToggleVideo}
+          title={videoActive ? "End video call" : "Start video call"}
+          style={videoActive ? { color: "var(--blue)", borderColor: "var(--blue)" } : {}}
+        >
+          <Icon name="camera" size={16} />
+        </button>
+
         <button className="icon-button" onClick={() => setSafetyOpen(!safetyOpen)} title="Safety options">
           <Icon name="more" />
         </button>
         <button className="icon-button" onClick={onClose} title="End conversation">
           <Icon name="close" />
         </button>
+
         {safetyOpen && (
           <div className="safety-menu">
             <span><Icon name="lock" size={15} /> Your privacy</span>
@@ -660,10 +746,39 @@ function ChatPanel({
         )}
       </div>
 
+      {/* Active Audio Call Bar */}
+      {callActive && !videoActive && (
+        <div className="audio-call-bar">
+          <div className="audio-call-info">
+            <div className="audio-call-wave">
+              <span /><span /><span /><span />
+            </div>
+            <span><strong>Voice call live</strong> · {formattedTime}</span>
+          </div>
+          <div className="audio-call-actions">
+            <button
+              className={`audio-action-btn ${micMuted ? "muted" : ""}`}
+              onClick={toggleMic}
+              title={micMuted ? "Unmute mic" : "Mute mic"}
+            >
+              <Icon name={micMuted ? "micOff" : "mic"} size={14} />
+            </button>
+            <button
+              className="audio-action-btn end"
+              onClick={onEndAudioCall}
+              title="End voice call"
+            >
+              <Icon name="phoneOff" size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Video Call Stage */}
       {videoActive ? (
         <div className="video-stage">
           <div className="video-noise" />
-          {remoteStream ? (
+          {remoteStream && remoteStream.getVideoTracks().length > 0 ? (
             <video
               ref={remoteVideoRef}
               autoPlay
@@ -673,41 +788,101 @@ function ChatPanel({
           ) : (
             <>
               <div className="video-avatar"><AlienFace tone={person.tone} /></div>
-              <p>Waiting for stranger’s camera</p>
-              <span>Encrypted audio & video channel</span>
+              <p>Waiting for stranger’s camera feed…</p>
+              <span>Encrypted live peer-to-peer stream</span>
             </>
           )}
 
           {localStream && (
             <div className="self-view">
-              <video
-                ref={localVideoRef}
-                autoPlay
-                playsInline
-                muted
-                style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              />
-              <small>You</small>
+              {cameraOff ? (
+                <div style={{ display: "grid", placeItems: "center", height: "100%", color: "var(--muted)" }}>
+                  <Icon name="videoOff" size={20} />
+                </div>
+              ) : (
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
+              )}
+              <small>You {cameraOff ? "(off)" : ""}</small>
             </div>
           )}
 
+          {/* Floating Controls */}
           <div className="video-controls" style={{ position: "absolute", bottom: "16px", zIndex: 10, display: "flex", gap: "10px" }}>
-            <button className="icon-button" onClick={toggleMic} title={micMuted ? "Unmute mic" : "Mute mic"}>
-              <Icon name="mic" />
+            <button
+              className={`icon-button ${micMuted ? "active" : ""}`}
+              onClick={toggleMic}
+              title={micMuted ? "Unmute mic" : "Mute mic"}
+              style={micMuted ? { background: "rgba(255, 59, 92, 0.2)", color: "var(--red)" } : {}}
+            >
+              <Icon name={micMuted ? "micOff" : "mic"} size={16} />
             </button>
-            <button className="icon-button" style={{ background: "var(--red)", color: "white" }} onClick={onToggleVideo} title="End video">
-              <Icon name="close" />
+            <button
+              className={`icon-button ${cameraOff ? "active" : ""}`}
+              onClick={toggleCamera}
+              title={cameraOff ? "Turn camera on" : "Turn camera off"}
+              style={cameraOff ? { background: "rgba(255, 59, 92, 0.2)", color: "var(--red)" } : {}}
+            >
+              <Icon name={cameraOff ? "videoOff" : "camera"} size={16} />
+            </button>
+            <button
+              className={`icon-button ${showChatInVideo ? "active" : ""}`}
+              onClick={() => setShowChatInVideo(!showChatInVideo)}
+              title="Toggle chat overlay"
+              style={showChatInVideo ? { background: "rgba(34, 211, 238, 0.2)", color: "var(--blue)" } : {}}
+            >
+              <Icon name="message" size={16} />
+            </button>
+            <button
+              className="icon-button"
+              style={{ background: "var(--red)", color: "white" }}
+              onClick={onToggleVideo}
+              title="End video call"
+            >
+              <Icon name="phoneOff" size={16} />
             </button>
           </div>
+
+          {/* Optional Chat Overlay During Video */}
+          {showChatInVideo && (
+            <div className="video-chat-toggle-pane">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", borderBottom: "1px solid var(--line)" }}>
+                <strong style={{ fontSize: "11px" }}>Live conversation</strong>
+                <button className="icon-button" onClick={() => setShowChatInVideo(false)} style={{ width: "24px", height: "24px" }}>
+                  <Icon name="close" size={13} />
+                </button>
+              </div>
+              <div className="messages" style={{ flex: 1, padding: "12px" }}>
+                {messages.map((message) => (
+                  <div className={`message ${message.mine ? "mine" : ""}`} key={message.id}>
+                    <p>{message.text}</p>
+                    <small>{message.mine ? "Delivered" : "Just now"}</small>
+                  </div>
+                ))}
+              </div>
+              <form className="composer" onSubmit={submitMessage}>
+                <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Type during call..." />
+                <button type="submit" aria-label="Send message"><Icon name="send" size={16} /></button>
+              </form>
+            </div>
+          )}
         </div>
       ) : (
         <>
-          <div className="privacy-line"><Icon name="lock" size={13} /> Peer-to-peer WebRTC · nothing stored</div>
+          <div className="privacy-line">
+            <Icon name="lock" size={13} />
+            {isConnecting ? "Connecting direct P2P data channel…" : "Peer-to-peer WebRTC · nothing stored"}
+          </div>
           <div className="messages">
             <div className="conversation-start">
               <span><Icon name="spark" size={15} /></span>
               <strong>Frequency connected</strong>
-              <p>You’re speaking directly with someone near {person.city}. Be kind and stay curious.</p>
+              <p>You’re speaking directly with {person.nickname || "someone"} near {person.city}. Be kind and stay curious.</p>
             </div>
             {messages.map((message) => (
               <div className={`message ${message.mine ? "mine" : ""}`} key={message.id}>
@@ -814,10 +989,13 @@ export default function App() {
   const [visible, setVisible] = useState(true);
 
   const [messages, setMessages] = useState<Message[]>([]);
+  const [callActive, setCallActive] = useState(false);
   const [videoActive, setVideoActive] = useState(false);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [incomingCall, setIncomingCall] = useState<{ type: "audio" | "video"; fromName: string; fromTone: AvatarTone } | null>(null);
+  const [outgoingCall, setOutgoingCall] = useState<{ type: "audio" | "video" } | null>(null);
 
   const [selectedCircle, setSelectedCircle] = useState<Circle | null>(null);
   const [hosting, setHosting] = useState(false);
@@ -839,7 +1017,10 @@ export default function App() {
     peerSessionRef.current = null;
     setLocalStream(null);
     setRemoteStream(null);
+    setCallActive(false);
     setVideoActive(false);
+    setIncomingCall(null);
+    setOutgoingCall(null);
     setMessages([]);
     setConn({ kind: "idle" });
     if (reason) showNotice(reason);
@@ -858,30 +1039,54 @@ export default function App() {
         setMessages((prev) => [...prev, { id: Date.now(), text, mine: false }]);
       },
       onControl: (ctrl: PeerControl) => {
-        if (ctrl === "video-request") {
-          // Auto-start video when stranger requests
-          session.startVideo().then((stream) => {
+        if (ctrl === "call-request") {
+          setIncomingCall({
+            type: "audio",
+            fromName: peer.nickname || peer.city || "Stranger",
+            fromTone: peer.tone,
+          });
+        } else if (ctrl === "call-accept") {
+          session.startAudio().then((stream) => {
             setLocalStream(stream);
-            setVideoActive(true);
-            session.sendControl("video-accept");
+            setCallActive(true);
+            setOutgoingCall(null);
+            showNotice("Voice call connected! Speak freely.");
           }).catch(() => {
-            session.sendControl("video-decline");
-            showNotice("Camera permission required for video.");
+            session.sendControl("call-decline");
+            setOutgoingCall(null);
+            showNotice("Microphone permission required for voice call.");
+          });
+        } else if (ctrl === "call-decline") {
+          setOutgoingCall(null);
+          showNotice("Voice call declined by stranger.");
+        } else if (ctrl === "call-end") {
+          session.stopAudio();
+          setCallActive(false);
+          showNotice("Voice call ended.");
+        } else if (ctrl === "video-request") {
+          setIncomingCall({
+            type: "video",
+            fromName: peer.nickname || peer.city || "Stranger",
+            fromTone: peer.tone,
           });
         } else if (ctrl === "video-accept") {
           session.startVideo().then((stream) => {
             setLocalStream(stream);
             setVideoActive(true);
+            setOutgoingCall(null);
+            showNotice("Video call connected!");
           }).catch(() => {
-            showNotice("Camera permission required.");
+            session.sendControl("video-decline");
+            setOutgoingCall(null);
+            showNotice("Camera permission required for video call.");
           });
         } else if (ctrl === "video-decline") {
-          showNotice("Video declined by stranger.");
+          setOutgoingCall(null);
+          showNotice("Video call declined by stranger.");
         } else if (ctrl === "video-end") {
           session.stopVideo();
-          setLocalStream(null);
-          setRemoteStream(null);
           setVideoActive(false);
+          showNotice("Video call ended.");
         }
       },
       onRemoteStream: (stream) => {
@@ -908,19 +1113,25 @@ export default function App() {
     switch (sig.type) {
       case "request": {
         if (current.kind === "idle") {
+          let meta: any = null;
+          try {
+            if (sig.payload) meta = JSON.parse(sig.payload);
+          } catch {}
+
           const fromPeer = peers.find((p) => p.id === sig.fromId) || {
             id: sig.fromId,
-            city: "Stranger",
-            country: "Earth",
-            distance: "nearby",
-            lat: 0,
-            lng: 0,
-            signal: "curious" as const,
-            match: 85,
-            energy: "Electric & searching",
-            tags: ["stranger", "new"],
-            prompt: "Say hi!",
-            tone: "violet" as AvatarTone,
+            city: meta?.city || "A fellow stranger",
+            country: meta?.country || "Earth",
+            distance: meta?.distance || "nearby",
+            lat: meta?.lat || 0,
+            lng: meta?.lng || 0,
+            signal: (meta?.signal as any) || "curious",
+            match: 88,
+            energy: "Warm & spontaneous",
+            tags: meta?.tags || ["online", "ready to talk"],
+            prompt: meta?.prompt || "Say hi!",
+            tone: (meta?.tone as AvatarTone) || "violet",
+            nickname: meta?.nickname || "",
           };
           setConn({ kind: "incoming", peer: fromPeer });
         } else {
@@ -938,7 +1149,7 @@ export default function App() {
       }
       case "decline": {
         if (current.kind === "requesting" && current.peer.id === sig.fromId) {
-          teardownConnection("Signal declined or stranger is busy.");
+          teardownConnection("Signal declined by stranger.");
         }
         break;
       }
@@ -1064,7 +1275,16 @@ export default function App() {
   function startConnect(peer: Person) {
     if (conn.kind !== "idle") return;
     setConn({ kind: "requesting", peer });
-    void sendSignal(sessionId, peer.id, "request");
+    const payload = JSON.stringify({
+      nickname: identity.nickname || "",
+      tone: identity.tone,
+      signal,
+      prompt: signalCopy[signal],
+      city: "Nearby",
+      lat: myLocation ? myLocation[0] : undefined,
+      lng: myLocation ? myLocation[1] : undefined,
+    });
+    void sendSignal(sessionId, peer.id, "request", payload);
 
     requestTimeoutRef.current = window.setTimeout(() => {
       if (connRef.current.kind === "requesting" && connRef.current.peer.id === peer.id) {
@@ -1094,17 +1314,84 @@ export default function App() {
     setMessages((prev) => [...prev, { id: Date.now(), text, mine: true }]);
   }
 
+  function startAudioCall() {
+    if (!peerSessionRef.current) return;
+    peerSessionRef.current.sendControl("call-request");
+    setOutgoingCall({ type: "audio" });
+  }
+
+  function acceptAudioCall() {
+    if (!peerSessionRef.current) return;
+    setIncomingCall(null);
+    peerSessionRef.current
+      .startAudio()
+      .then((stream) => {
+        setLocalStream(stream);
+        setCallActive(true);
+        peerSessionRef.current?.sendControl("call-accept");
+        showNotice("Voice call connected! Speak freely.");
+      })
+      .catch(() => {
+        peerSessionRef.current?.sendControl("call-decline");
+        showNotice("Microphone permission required for voice call.");
+      });
+  }
+
+  function declineAudioCall() {
+    if (peerSessionRef.current) {
+      peerSessionRef.current.sendControl("call-decline");
+    }
+    setIncomingCall(null);
+  }
+
+  function endAudioCall() {
+    if (peerSessionRef.current) {
+      peerSessionRef.current.stopAudio();
+      peerSessionRef.current.sendControl("call-end");
+    }
+    setCallActive(false);
+    showNotice("Voice call ended.");
+  }
+
+  function startVideoCall() {
+    if (!peerSessionRef.current) return;
+    peerSessionRef.current.sendControl("video-request");
+    setOutgoingCall({ type: "video" });
+  }
+
+  function acceptVideoCall() {
+    if (!peerSessionRef.current) return;
+    setIncomingCall(null);
+    peerSessionRef.current
+      .startVideo()
+      .then((stream) => {
+        setLocalStream(stream);
+        setVideoActive(true);
+        peerSessionRef.current?.sendControl("video-accept");
+        showNotice("Video call connected!");
+      })
+      .catch(() => {
+        peerSessionRef.current?.sendControl("video-decline");
+        showNotice("Camera permission required for video call.");
+      });
+  }
+
+  function declineVideoCall() {
+    if (peerSessionRef.current) {
+      peerSessionRef.current.sendControl("video-decline");
+    }
+    setIncomingCall(null);
+  }
+
   function toggleVideo() {
     if (!peerSessionRef.current) return;
     if (videoActive) {
       peerSessionRef.current.stopVideo();
       peerSessionRef.current.sendControl("video-end");
-      setLocalStream(null);
-      setRemoteStream(null);
       setVideoActive(false);
+      showNotice("Video call ended.");
     } else {
-      peerSessionRef.current.sendControl("video-request");
-      showNotice("Video call requested...");
+      startVideoCall();
     }
   }
 
@@ -1297,12 +1584,72 @@ export default function App() {
           person={conn.peer}
           messages={messages}
           onSendMessage={sendChatMessage}
+          onStartAudioCall={startAudioCall}
+          onEndAudioCall={endAudioCall}
+          callActive={callActive}
           onToggleVideo={toggleVideo}
           videoActive={videoActive}
           localStream={localStream}
           remoteStream={remoteStream}
           onClose={() => teardownConnection("Conversation ended.")}
+          isConnecting={conn.kind === "connecting"}
         />
+      )}
+
+      {/* Incoming Call Prompt (Audio or Video) */}
+      {incomingCall && (
+        <div className="modal-backdrop" style={{ zIndex: 120 }}>
+          <section className="call-modal">
+            <div className="call-modal-orb">
+              <AlienFace tone={incomingCall.fromTone} />
+            </div>
+            <h3>Incoming {incomingCall.type === "audio" ? "Voice" : "Video"} Call</h3>
+            <p>From <strong>{incomingCall.fromName}</strong></p>
+            <div className="call-modal-actions">
+              <button
+                className="call-btn-accept"
+                onClick={incomingCall.type === "audio" ? acceptAudioCall : acceptVideoCall}
+              >
+                <Icon name={incomingCall.type === "audio" ? "phone" : "camera"} size={16} />
+                Accept {incomingCall.type === "audio" ? "Voice" : "Video"}
+              </button>
+              <button
+                className="call-btn-decline"
+                onClick={incomingCall.type === "audio" ? declineAudioCall : declineVideoCall}
+              >
+                <Icon name="close" size={16} />
+                Decline
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* Outgoing Call Waiting Prompt */}
+      {outgoingCall && (
+        <div className="modal-backdrop" style={{ zIndex: 120 }}>
+          <section className="call-modal">
+            <div className="call-modal-orb">
+              <AlienFace tone={conn.kind !== "idle" ? conn.peer.tone : "violet"} />
+            </div>
+            <h3>Calling {conn.kind !== "idle" ? (conn.peer.nickname || conn.peer.city) : "Stranger"}…</h3>
+            <p>Waiting for stranger to accept your {outgoingCall.type === "audio" ? "voice" : "video"} call</p>
+            <div style={{ margin: "16px auto" }} className="loader" />
+            <button
+              className="connect-button"
+              style={{ background: "rgba(255,255,255,0.08)", color: "white" }}
+              onClick={() => {
+                if (peerSessionRef.current) {
+                  peerSessionRef.current.sendControl(outgoingCall.type === "audio" ? "call-end" : "video-end");
+                }
+                setOutgoingCall(null);
+                showNotice("Call cancelled.");
+              }}
+            >
+              Cancel Call
+            </button>
+          </section>
+        </div>
       )}
 
       {filtersOpen && (
