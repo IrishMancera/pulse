@@ -193,7 +193,7 @@ async function kvRegister(
 
 async function kvTouch(
   id: string,
-  meta?: { signal?: string; tone?: string; nickname?: string; lat?: number; lng?: number; invisible?: boolean }
+  meta?: { signal?: string; tone?: string; nickname?: string; lat?: number; lng?: number; invisible?: boolean; circle?: string | null }
 ): Promise<void> {
   const store = await getKV();
   if (!store) { memTouch(id, meta); return; }
