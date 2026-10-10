@@ -427,7 +427,8 @@ function pulseApiDevPlugin(): Plugin {
               const invisible = url.searchParams.get('invisible') === 'true'
               const lat = url.searchParams.get('lat') ? parseFloat(url.searchParams.get('lat')!) : undefined
               const lng = url.searchParams.get('lng') ? parseFloat(url.searchParams.get('lng')!) : undefined
-              await store.touchPresence(id, { signal, tone, nickname, lat, lng, invisible })
+              const circle = url.searchParams.get('circle') || undefined
+              await store.touchPresence(id, { signal, tone, nickname, lat, lng, invisible, circle })
               const peers = await store.listPeers(id, lat, lng, signal)
               const signals = await store.drainSignals(id)
               res.end(JSON.stringify({ peers, signals }))

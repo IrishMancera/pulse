@@ -23,6 +23,7 @@ export interface PresenceRecord {
   prompt: string;
   tags: string[];
   invisible: boolean;
+  circle?: string | null;
 }
 
 export interface StoredSignal {
@@ -158,7 +159,7 @@ function buildTags(signal: string) {
 // ── KV-backed operations ───────────────────────────────────────────────────
 async function kvRegister(
   id: string, rawLat: number, rawLng: number,
-  meta?: { signal?: string; tone?: string; nickname?: string; invisible?: boolean }
+  meta?: { signal?: string; tone?: string; nickname?: string; invisible?: boolean; circle?: string | null }
 ): Promise<PresenceRecord> {
   const store = await getKV();
   if (!store) return memRegister(id, rawLat, rawLng, meta);
@@ -181,6 +182,7 @@ async function kvRegister(
     prompt: buildPrompt(sig),
     tags: buildTags(sig),
     invisible: meta?.invisible ?? false,
+    circle: meta?.circle || null,
   };
 
   await store.set(PRESENCE_KEY(id), JSON.stringify(record), { ex: Math.ceil(STALE_MS / 1000) + 5 });
@@ -210,6 +212,7 @@ async function kvTouch(
   if (meta?.tone) record.tone = meta.tone as PresenceRecord["tone"];
   if (meta?.nickname !== undefined) record.nickname = meta.nickname.trim();
   if (meta?.invisible !== undefined) record.invisible = meta.invisible;
+  if (meta?.circle !== undefined) record.circle = meta.circle || null;
 
   await store.set(PRESENCE_KEY(id), JSON.stringify(record), { ex: Math.ceil(STALE_MS / 1000) + 5 });
 }
@@ -265,6 +268,7 @@ async function kvList(callerId: string, callerLat?: number, callerLng?: number, 
       city: record.city, country: record.country, prompt: record.prompt,
       tags: record.tags, distance: distStr, distanceKm: distKm, match,
       energy: record.signal === "open" ? "Warm & spontaneous" : record.signal === "curious" ? "Electric & searching" : "Calm & contemplative",
+      circle: record.circle || null,
     });
   }));
 
@@ -349,7 +353,7 @@ async function kvDrainSignals(toId: string): Promise<any[]> {
 // ── In-memory fallback implementations ────────────────────────────────────
 function memRegister(
   id: string, rawLat: number, rawLng: number,
-  meta?: { signal?: string; tone?: string; nickname?: string; invisible?: boolean }
+  meta?: { signal?: string; tone?: string; nickname?: string; invisible?: boolean; circle?: string | null }
 ): PresenceRecord {
   const offset = applyPrivacyOffset(rawLat, rawLng);
   const geo = getCityInfo(offset.lat, offset.lng);
@@ -364,6 +368,7 @@ function memRegister(
     prompt: buildPrompt(sig),
     tags: buildTags(sig),
     invisible: meta?.invisible ?? false,
+    circle: meta?.circle || null,
   };
   memPresences.set(id, record);
   return record;
@@ -371,7 +376,7 @@ function memRegister(
 
 function memTouch(
   id: string,
-  meta?: { signal?: string; tone?: string; nickname?: string; lat?: number; lng?: number; invisible?: boolean }
+  meta?: { signal?: string; tone?: string; nickname?: string; lat?: number; lng?: number; invisible?: boolean; circle?: string | null }
 ) {
   let existing = memPresences.get(id);
   if (!existing && meta?.lat !== undefined && meta?.lng !== undefined && !isNaN(meta.lat) && !isNaN(meta.lng)) {
@@ -384,6 +389,7 @@ function memTouch(
     if (meta?.tone) existing.tone = meta.tone as PresenceRecord["tone"];
     if (meta?.nickname !== undefined) existing.nickname = meta.nickname.trim();
     if (meta?.invisible !== undefined) existing.invisible = meta.invisible;
+    if (meta?.circle !== undefined) existing.circle = meta.circle || null;
   }
 }
 
@@ -421,6 +427,7 @@ function memList(callerId: string, callerLat?: number, callerLng?: number, calle
       city: record.city, country: record.country, prompt: record.prompt,
       tags: record.tags, distance: distStr, distanceKm: distKm, match,
       energy: record.signal === "open" ? "Warm & spontaneous" : record.signal === "curious" ? "Electric & searching" : "Calm & contemplative",
+      circle: record.circle || null,
     });
   }
 
@@ -471,7 +478,7 @@ function memDrainSignals(toId: string): any[] {
 // ── Public async API ───────────────────────────────────────────────────────
 export async function registerPresence(
   id: string, rawLat: number, rawLng: number,
-  meta?: { signal?: string; tone?: string; nickname?: string; invisible?: boolean }
+  meta?: { signal?: string; tone?: string; nickname?: string; invisible?: boolean; circle?: string | null }
 ): Promise<PresenceRecord> {
   await getKV();
   return kvAvailable ? kvRegister(id, rawLat, rawLng, meta) : memRegister(id, rawLat, rawLng, meta);
@@ -479,7 +486,7 @@ export async function registerPresence(
 
 export async function touchPresence(
   id: string,
-  meta?: { signal?: string; tone?: string; nickname?: string; lat?: number; lng?: number; invisible?: boolean }
+  meta?: { signal?: string; tone?: string; nickname?: string; lat?: number; lng?: number; invisible?: boolean; circle?: string | null }
 ): Promise<void> {
   await getKV();
   return kvAvailable ? kvTouch(id, meta) : Promise.resolve(memTouch(id, meta));

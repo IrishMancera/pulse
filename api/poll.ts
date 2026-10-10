@@ -26,7 +26,9 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: "Invalid lng" });
     }
 
-    await touchPresence(id, { signal, tone, nickname, lat, lng, invisible });
+    const circle = url.searchParams.get("circle") || undefined;
+
+    await touchPresence(id, { signal, tone, nickname, lat, lng, invisible, circle });
     const peers = await listPeers(id, lat, lng, signal);
     const signals = await drainSignals(id);
 

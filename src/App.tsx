@@ -2,7 +2,7 @@ import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "reac
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { join, leave, poll, sendSignal, type PeerDot, type SignalMsg, type SignalType } from "./api";
-import { PeerSession, type DescType, type PeerControl } from "./webrtc";
+import { ICE_CONFIG, PeerSession, type DescType, type PeerControl } from "./webrtc";
 
 type IconName =
   | "arrow"
@@ -45,6 +45,7 @@ export type Person = {
   tone: AvatarTone;
   nickname?: string;
   busy?: boolean;
+  circle?: string | null;
 };
 
 type Message = {
@@ -481,28 +482,356 @@ function CirclesView({ onJoin, onHost }: { onJoin: (circle: Circle) => void; onH
   );
 }
 
-function CircleRoom({ circle, onLeave }: { circle: Circle; onLeave: () => void }) {
-  const [speaking, setSpeaking] = useState(false);
+function CircleRoom({
+  circle,
+  peers,
+  sessionId,
+  identity,
+  onLeave,
+  circleSignalRef,
+  showNotice,
+}: {
+  circle: Circle;
+  peers: Person[];
+  sessionId: string;
+  identity: UserIdentity;
+  onLeave: () => void;
+  circleSignalRef: React.MutableRefObject<((sig: SignalMsg) => void) | null>;
+  showNotice: (msg: string) => void;
+}) {
+  const [micActive, setMicActive] = useState(false);
+  const [micMuted, setMicMuted] = useState(false);
+  const [selfMonitor, setSelfMonitor] = useState(false);
+  const [audioLevel, setAudioLevel] = useState(0);
+  const [waveHeights, setWaveHeights] = useState<number[]>(Array(24).fill(8));
+  const [speakingPeers, setSpeakingPeers] = useState<Set<string>>(new Set());
+
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const monitorGainRef = useRef<GainNode | null>(null);
+  const animFrameRef = useRef<number | null>(null);
+  const peerConnections = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const remoteAudios = useRef<Map<string, HTMLAudioElement>>(new Map());
+
+  // Filter peers that are in this circle
+  const roomPeers = useMemo(
+    () => peers.filter((p) => p.circle === circle.title),
+    [peers, circle.title]
+  );
+
+  // Total active count in this circle
+  const activeCount = 1 + roomPeers.length;
+
+  function getOrCreatePC(peerId: string): RTCPeerConnection {
+    let pc = peerConnections.current.get(peerId);
+    if (pc) return pc;
+
+    pc = new RTCPeerConnection(ICE_CONFIG);
+    peerConnections.current.set(peerId, pc);
+
+    pc.onicecandidate = ({ candidate }) => {
+      if (candidate) {
+        void sendSignal(sessionId, peerId, "ice", JSON.stringify({ circle: circle.title, candidate }));
+      }
+    };
+
+    pc.ontrack = (event) => {
+      const stream = event.streams[0] || new MediaStream([event.track]);
+      let audio = remoteAudios.current.get(peerId);
+      if (!audio) {
+        audio = new Audio();
+        audio.autoplay = true;
+        (audio as any).playsInline = true;
+        remoteAudios.current.set(peerId, audio);
+      }
+      audio.srcObject = stream;
+      audio.play().catch((e) => console.warn("Remote audio play error:", e));
+
+      // Mark this peer as speaking when audio flows
+      setSpeakingPeers((prev) => new Set(prev).add(peerId));
+    };
+
+    // If local microphone stream exists, add tracks
+    if (localStreamRef.current) {
+      for (const track of localStreamRef.current.getAudioTracks()) {
+        try {
+          pc.addTrack(track, localStreamRef.current);
+        } catch {}
+      }
+    }
+
+    return pc;
+  }
+
+  async function connectToPeer(peerId: string, stream?: MediaStream) {
+    const pc = getOrCreatePC(peerId);
+    if (stream) {
+      for (const track of stream.getAudioTracks()) {
+        if (!pc.getSenders().some((s) => s.track === track)) {
+          try {
+            pc.addTrack(track, stream);
+          } catch {}
+        }
+      }
+    }
+
+    // Deterministic initiator: the one with smaller UUID initiates
+    if (sessionId < peerId) {
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        void sendSignal(
+          sessionId,
+          peerId,
+          "offer",
+          JSON.stringify({ circle: circle.title, sdp: pc.localDescription })
+        );
+      } catch (e) {
+        console.warn("Circle offer error:", e);
+      }
+    }
+  }
+
+  // Handle incoming circle WebRTC signals
+  useEffect(() => {
+    circleSignalRef.current = async (sig: SignalMsg) => {
+      try {
+        const data = sig.payload ? JSON.parse(sig.payload) : {};
+        if (data.circle !== circle.title) return;
+
+        const pc = getOrCreatePC(sig.fromId);
+        if (sig.type === "offer") {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          void sendSignal(
+            sessionId,
+            sig.fromId,
+            "answer",
+            JSON.stringify({ circle: circle.title, sdp: pc.localDescription })
+          );
+        } else if (sig.type === "answer") {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        } else if (sig.type === "ice") {
+          if (data.candidate) {
+            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+          }
+        }
+      } catch (e) {
+        console.warn("Circle signal handling error:", e);
+      }
+    };
+
+    return () => {
+      circleSignalRef.current = null;
+    };
+  }, [circle.title, sessionId]);
+
+  // Connect to any new peers joining the circle
+  useEffect(() => {
+    for (const p of roomPeers) {
+      void connectToPeer(p.id, localStreamRef.current || undefined);
+    }
+  }, [roomPeers]);
+
+  async function joinVoice() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      localStreamRef.current = stream;
+      setMicActive(true);
+      setMicMuted(false);
+
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      const ctx = new AudioCtx();
+      audioCtxRef.current = ctx;
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 64;
+      source.connect(analyser);
+
+      // Self-monitoring node (loopback for hearing oneself)
+      const monitorGain = ctx.createGain();
+      monitorGain.gain.value = selfMonitor ? 0.7 : 0;
+      source.connect(monitorGain);
+      monitorGain.connect(ctx.destination);
+      monitorGainRef.current = monitorGain;
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      const updateWave = () => {
+        if (!localStreamRef.current) return;
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+        const avg = sum / dataArray.length;
+        setAudioLevel(avg);
+
+        // Dynamically compute bar heights based on speech frequencies
+        const newHeights = Array.from({ length: 24 }, (_, i) => {
+          const val = dataArray[i % dataArray.length] || 0;
+          return Math.max(5, Math.min(32, Math.round(5 + (val / 255) * 27)));
+        });
+        setWaveHeights(newHeights);
+        animFrameRef.current = requestAnimationFrame(updateWave);
+      };
+      updateWave();
+
+      // Add audio track to all peer connections in the circle
+      for (const p of roomPeers) {
+        void connectToPeer(p.id, stream);
+      }
+      showNotice("Microphone live! Everyone in the circle can now hear you.");
+    } catch (err) {
+      console.error(err);
+      showNotice("Could not access microphone. Please allow microphone permissions.");
+    }
+  }
+
+  function toggleMute() {
+    if (localStreamRef.current) {
+      const next = !micMuted;
+      localStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = !next));
+      setMicMuted(next);
+      showNotice(next ? "Microphone muted." : "Microphone unmuted · speaking freely.");
+    }
+  }
+
+  function toggleSelfMonitor() {
+    const next = !selfMonitor;
+    setSelfMonitor(next);
+    if (monitorGainRef.current) {
+      monitorGainRef.current.gain.value = next ? 0.7 : 0;
+    }
+    showNotice(next ? "Voice monitor active (use headphones to prevent acoustic echo)." : "Voice monitor turned off.");
+  }
+
+  // Cleanup on unmount or when leaving the room
+  useEffect(() => {
+    return () => {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((t) => t.stop());
+        localStreamRef.current = null;
+      }
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close().catch(() => {});
+        audioCtxRef.current = null;
+      }
+      for (const pc of peerConnections.current.values()) {
+        try { pc.close(); } catch {}
+      }
+      peerConnections.current.clear();
+      for (const audio of remoteAudios.current.values()) {
+        try { audio.srcObject = null; audio.pause(); } catch {}
+      }
+      remoteAudios.current.clear();
+    };
+  }, []);
+
+  // Display souls around the orbit
+  const orbitSouls = useMemo(() => {
+    const list = [
+      { id: sessionId, tone: identity.tone, isSelf: true, speaking: micActive && !micMuted && audioLevel > 15 },
+      ...roomPeers.map((p) => ({
+        id: p.id,
+        tone: p.tone,
+        isSelf: false,
+        speaking: speakingPeers.has(p.id),
+      })),
+    ];
+    // Pad to at least 7 visuals for aesthetics
+    while (list.length < 7) {
+      list.push({
+        id: `phantom-${list.length}`,
+        tone: avatarTones[list.length % avatarTones.length],
+        isSelf: false,
+        speaking: false,
+      });
+    }
+    return list.slice(0, 7);
+  }, [sessionId, identity.tone, roomPeers, micActive, micMuted, audioLevel, speakingPeers]);
+
   return (
     <section className={`circle-room ${circle.tone}`}>
       <div className="room-head">
-        <span><i /> Live circle</span>
-        <button onClick={onLeave}><Icon name="close" size={16} /></button>
+        <span><i /> Live circle · Voice active</span>
+        <button onClick={onLeave} title="Leave circle"><Icon name="close" size={16} /></button>
       </div>
+
       <div className="room-orbit">
-        {Array.from({ length: 7 }, (_, index) => <i className={`room-soul soul-${index + 1}`} key={index}><AlienFace tone={avatarTones[index % avatarTones.length]} /></i>)}
-        <div className="room-center"><Icon name="users" size={20} /><strong>{circle.count}</strong><small>listening</small></div>
+        {orbitSouls.map((soul, index) => (
+          <i
+            className={`room-soul soul-${index + 1} ${soul.speaking ? "speaking" : ""}`}
+            key={soul.id}
+            style={soul.speaking ? { transform: `scale(1.25)`, filter: "drop-shadow(0 0 10px var(--green))" } : {}}
+          >
+            <AlienFace tone={soul.tone} />
+          </i>
+        ))}
+        <div className="room-center">
+          <Icon name="users" size={20} />
+          <strong>{activeCount}</strong>
+          <small>{micActive ? (micMuted ? "muted" : "speaking") : "listening"}</small>
+        </div>
       </div>
+
       <span className="room-label">Now discussing</span>
       <h2>{circle.title}</h2>
       <blockquote>“{circle.topic}”</blockquote>
-      <div className="room-wave">{Array.from({ length: 24 }, (_, index) => <i key={index} />)}</div>
-      <p>{speaking ? "You’re on the floor. Speaking freely." : "You’re listening quietly. Join when it feels right."}</p>
+
+      {/* Dynamic Waveform responding to real voice volume */}
+      <div className="room-wave">
+        {waveHeights.map((h, index) => (
+          <i
+            key={index}
+            style={{
+              height: micActive && !micMuted ? `${h}px` : undefined,
+              animation: micActive && !micMuted ? "none" : undefined,
+              background: micActive && !micMuted && audioLevel > 12 ? "var(--green)" : undefined,
+              transition: "height 0.08s ease",
+            }}
+          />
+        ))}
+      </div>
+
+      <p>
+        {!micActive
+          ? "You’re listening quietly. Tap 'Join voice' to speak to everyone in this room."
+          : micMuted
+          ? "Microphone is muted. Tap 'Unmute mic' when you're ready to speak."
+          : audioLevel > 15
+          ? "You’re speaking on the floor. Voice is live and streaming!"
+          : "You’re on the floor. Microphone is listening… speak freely."}
+      </p>
+
       <div className="room-actions">
-        <button className={speaking ? "live" : ""} onClick={() => setSpeaking(!speaking)}><Icon name="mic" size={17} /> {speaking ? "Mute mic" : "Join voice"}</button>
+        {!micActive ? (
+          <button className="live" onClick={joinVoice}>
+            <Icon name="mic" size={17} /> Join voice
+          </button>
+        ) : (
+          <button className={micMuted ? "" : "live"} onClick={toggleMute}>
+            <Icon name={micMuted ? "micOff" : "mic"} size={17} />
+            {micMuted ? "Unmute mic" : "Mute mic"}
+          </button>
+        )}
+
+        {micActive && (
+          <button
+            onClick={toggleSelfMonitor}
+            title="Hear yourself through headphones"
+            style={selfMonitor ? { borderColor: "var(--blue)", color: "var(--blue)", background: "rgba(34,211,238,0.12)" } : {}}
+          >
+            <Icon name="spark" size={15} />
+            {selfMonitor ? "Voice monitor ON" : "Test hear myself"}
+          </button>
+        )}
+
         <button onClick={onLeave}>Leave quietly</button>
       </div>
-      <small className="room-privacy"><Icon name="lock" size={12} /> This room disappears when everyone leaves</small>
+
+      <small className="room-privacy">
+        <Icon name="lock" size={12} /> Peer-to-peer encrypted audio · Nothing is recorded or stored
+      </small>
     </section>
   );
 }
@@ -1003,6 +1332,7 @@ export default function App() {
   const [serendipityMatch, setSerendipityMatch] = useState<Person | null>(null);
 
   const peerSessionRef = useRef<PeerSession | null>(null);
+  const circleSignalRef = useRef<((sig: SignalMsg) => void) | null>(null);
   const requestTimeoutRef = useRef<number | null>(null);
   const serendipityTimer = useRef<number | null>(null);
 
@@ -1109,6 +1439,16 @@ export default function App() {
   }
 
   function handleSignalMessage(sig: SignalMsg) {
+    if (sig.payload) {
+      try {
+        const data = JSON.parse(sig.payload);
+        if (data.circle && circleSignalRef.current) {
+          circleSignalRef.current(sig);
+          return;
+        }
+      } catch {}
+    }
+
     const current = connRef.current;
     switch (sig.type) {
       case "request": {
@@ -1188,6 +1528,7 @@ export default function App() {
           tone: identity.tone,
           nickname: identity.nickname,
           invisible: !visible,
+          circle: selectedCircle ? selectedCircle.title : undefined,
         });
 
         if (!active) return;
@@ -1208,6 +1549,7 @@ export default function App() {
           tone: p.tone || "green",
           nickname: p.nickname,
           busy: p.busy,
+          circle: p.circle || null,
         }));
 
         setPeers(mappedPeers);
@@ -1229,7 +1571,7 @@ export default function App() {
       active = false;
       if (timer) clearTimeout(timer);
     };
-  }, [entered, sessionId, myLocation, signal, identity, visible]);
+  }, [entered, sessionId, myLocation, signal, identity, visible, selectedCircle]);
 
 
   // Tab close beacon — send leave + notify active peer
@@ -1513,7 +1855,15 @@ export default function App() {
       )}
 
       {mode === "circles" && selectedCircle && (
-        <CircleRoom circle={selectedCircle} onLeave={() => setSelectedCircle(null)} />
+        <CircleRoom
+          circle={selectedCircle}
+          peers={peers}
+          sessionId={sessionId}
+          identity={identity}
+          circleSignalRef={circleSignalRef}
+          showNotice={showNotice}
+          onLeave={() => setSelectedCircle(null)}
+        />
       )}
 
       {/* Selected Person Card Modal */}

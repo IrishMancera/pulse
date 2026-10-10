@@ -25,6 +25,7 @@ export interface PeerDot {
   distanceKm?: number;
   match?: number;
   energy?: string;
+  circle?: string | null;
 }
 
 export interface SignalMsg {
@@ -80,6 +81,7 @@ export async function poll(
     tone?: "green" | "violet" | "cyan" | "rose" | "amber";
     nickname?: string;
     invisible?: boolean;
+    circle?: string;
   }
 ): Promise<PollResponse> {
   const query = new URLSearchParams({ id });
@@ -89,6 +91,7 @@ export async function poll(
   if (meta?.tone) query.set("tone", meta.tone);
   if (meta?.nickname) query.set("nickname", meta.nickname);
   if (meta?.invisible) query.set("invisible", "true");
+  if (meta?.circle) query.set("circle", meta.circle);
 
   return fetchJSON(`/api/poll?${query.toString()}`);
 }
