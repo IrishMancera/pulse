@@ -1291,6 +1291,49 @@ function IdentityPanel({
   );
 }
 
+function playSignalAlert() {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+
+    // Low rumble vibration feeling
+    const oscLow = ctx.createOscillator();
+    const gainLow = ctx.createGain();
+    oscLow.type = "sawtooth";
+    oscLow.frequency.setValueAtTime(55, ctx.currentTime);
+    gainLow.gain.setValueAtTime(0, ctx.currentTime);
+    gainLow.gain.linearRampToValueAtTime(0.22, ctx.currentTime + 0.05);
+    gainLow.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+    oscLow.connect(gainLow);
+    gainLow.connect(ctx.destination);
+    oscLow.start();
+    oscLow.stop(ctx.currentTime + 0.4);
+
+    // High radar sonar ping
+    const oscHigh = ctx.createOscillator();
+    const gainHigh = ctx.createGain();
+    oscHigh.type = "sine";
+    oscHigh.frequency.setValueAtTime(659.25, ctx.currentTime + 0.04);
+    oscHigh.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.18);
+    gainHigh.gain.setValueAtTime(0, ctx.currentTime);
+    gainHigh.gain.linearRampToValueAtTime(0.28, ctx.currentTime + 0.06);
+    gainHigh.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+    oscHigh.connect(gainHigh);
+    gainHigh.connect(ctx.destination);
+    oscHigh.start(ctx.currentTime + 0.04);
+    oscHigh.stop(ctx.currentTime + 0.5);
+  } catch {}
+}
+
+function triggerVibrate() {
+  if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+    try {
+      navigator.vibrate([220, 100, 220, 100, 360]);
+    } catch {}
+  }
+}
+
 export default function App() {
   const [entered, setEntered] = useState(false);
   const [sessionId] = useState(() => {
@@ -1335,6 +1378,21 @@ export default function App() {
   const circleSignalRef = useRef<((sig: SignalMsg) => void) | null>(null);
   const requestTimeoutRef = useRef<number | null>(null);
   const serendipityTimer = useRef<number | null>(null);
+
+  // Incoming signal vibration and radar alert chime loop
+  useEffect(() => {
+    if (conn.kind !== "incoming") return;
+
+    playSignalAlert();
+    triggerVibrate();
+
+    const timer = window.setInterval(() => {
+      playSignalAlert();
+      triggerVibrate();
+    }, 2400);
+
+    return () => clearInterval(timer);
+  }, [conn.kind]);
 
   function showNotice(text: string) {
     setNotice(text);
@@ -1756,7 +1814,7 @@ export default function App() {
   if (!entered) return <Welcome onEnter={handleEnter} />;
 
   return (
-    <main className={`app-shell mode-${mode}`}>
+    <main className={`app-shell mode-${mode} ${conn.kind === "incoming" ? "screen-vibrating" : ""}`}>
       <SpatialBackground />
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
@@ -1909,21 +1967,41 @@ export default function App() {
 
       {/* Incoming Connection Prompt */}
       {conn.kind === "incoming" && (
-        <div className="modal-backdrop">
-          <aside className="person-card" style={{ position: "relative", right: "auto", top: "auto", transform: "none", animation: "revealcopy .4s ease" }}>
-            <div className="person-orb"><AlienFace tone={conn.peer.tone} /><i /></div>
-            <span className="match-label">Incoming signal from</span>
-            <h2>{conn.peer.city}</h2>
-            <p>{conn.peer.distance} · {signalCopy[conn.peer.signal]}</p>
+        <div className="incoming-signal-backdrop">
+          <div className="incoming-sonar-ring ring-1" />
+          <div className="incoming-sonar-ring ring-2" />
+          <div className="incoming-sonar-ring ring-3" />
+          <aside className="incoming-signal-card">
+            <div className="incoming-pulse-badge">
+              <span className="live-dot" /> Incoming Signal
+            </div>
+            <div className="person-orb incoming-orb">
+              <AlienFace tone={conn.peer.tone} />
+              <i />
+            </div>
+            <span className="match-label">Frequency Resonance: {conn.peer.match}%</span>
+            <h2>Connect with {conn.peer.nickname ? conn.peer.nickname : conn.peer.city}?</h2>
+            <p className="incoming-location">
+              {conn.peer.city}, {conn.peer.country} · {conn.peer.distance}
+            </p>
+            <div className="incoming-frequency-badge">
+              <span className={`signal-glyph ${conn.peer.signal}`} />
+              <span>{signalCopy[conn.peer.signal]}</span>
+            </div>
             <blockquote>“{conn.peer.prompt}”</blockquote>
-            <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
-              <button className="connect-button" onClick={acceptIncoming}>
-                Accept <Icon name="check" size={16} />
+            <div className="incoming-actions">
+              <button className="incoming-btn-accept" onClick={acceptIncoming}>
+                <Icon name="check" size={18} />
+                Accept
               </button>
-              <button className="connect-button" style={{ background: "rgba(255,255,255,0.08)", color: "white" }} onClick={declineIncoming}>
+              <button className="incoming-btn-decline" onClick={declineIncoming}>
+                <Icon name="close" size={18} />
                 Decline
               </button>
             </div>
+            <small className="incoming-countdown">
+              <Icon name="lock" size={12} /> Encrypted peer-to-peer · Automatically dissolves if unaccepted
+            </small>
           </aside>
         </div>
       )}
