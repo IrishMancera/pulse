@@ -511,6 +511,7 @@ function CircleRoom({
   const animFrameRef = useRef<number | null>(null);
   const peerConnections = useRef<Map<string, RTCPeerConnection>>(new Map());
   const remoteAudios = useRef<Map<string, HTMLAudioElement>>(new Map());
+  const pendingCandidates = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
 
   // Filter peers that are in this circle
   const roomPeers = useMemo(
@@ -520,6 +521,17 @@ function CircleRoom({
 
   // Total active count in this circle
   const activeCount = 1 + roomPeers.length;
+
+  function flushPendingIce(peerId: string, pc: RTCPeerConnection) {
+    const queued = pendingCandidates.current.get(peerId);
+    if (!queued || queued.length === 0) return;
+    for (const cand of queued) {
+      try {
+        void pc.addIceCandidate(new RTCIceCandidate(cand));
+      } catch {}
+    }
+    pendingCandidates.current.delete(peerId);
+  }
 
   function getOrCreatePC(peerId: string): RTCPeerConnection {
     let pc = peerConnections.current.get(peerId);
@@ -541,6 +553,8 @@ function CircleRoom({
         audio = new Audio();
         audio.autoplay = true;
         (audio as any).playsInline = true;
+        audio.style.display = "none";
+        document.body.appendChild(audio);
         remoteAudios.current.set(peerId, audio);
       }
       audio.srcObject = stream;
@@ -554,7 +568,9 @@ function CircleRoom({
     if (localStreamRef.current) {
       for (const track of localStreamRef.current.getAudioTracks()) {
         try {
-          pc.addTrack(track, localStreamRef.current);
+          if (!pc.getSenders().some((s) => s.track === track)) {
+            pc.addTrack(track, localStreamRef.current);
+          }
         } catch {}
       }
     }
@@ -574,10 +590,11 @@ function CircleRoom({
       }
     }
 
-    // Deterministic initiator: the one with smaller UUID initiates
-    if (sessionId < peerId) {
+    // Send offer if we have local audio stream or by deterministic initiator
+    if (stream || localStreamRef.current || sessionId < peerId) {
       try {
-        const offer = await pc.createOffer();
+        const offer = await pc.createOffer({ offerToReceiveAudio: true });
+        if (pc.signalingState !== "stable") return;
         await pc.setLocalDescription(offer);
         void sendSignal(
           sessionId,
@@ -600,7 +617,19 @@ function CircleRoom({
 
         const pc = getOrCreatePC(sig.fromId);
         if (sig.type === "offer") {
+          // If we have local stream, attach it so the answer carries our audio back
+          if (localStreamRef.current) {
+            for (const track of localStreamRef.current.getAudioTracks()) {
+              if (!pc.getSenders().some((s) => s.track === track)) {
+                try {
+                  pc.addTrack(track, localStreamRef.current);
+                } catch {}
+              }
+            }
+          }
           await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          flushPendingIce(sig.fromId, pc);
+
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
           void sendSignal(
@@ -611,9 +640,20 @@ function CircleRoom({
           );
         } else if (sig.type === "answer") {
           await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          flushPendingIce(sig.fromId, pc);
         } else if (sig.type === "ice") {
           if (data.candidate) {
-            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+            if (pc.remoteDescription) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+              } catch (e) {
+                console.warn("ICE candidate add error:", e);
+              }
+            } else {
+              const list = pendingCandidates.current.get(sig.fromId) || [];
+              list.push(data.candidate);
+              pendingCandidates.current.set(sig.fromId, list);
+            }
           }
         }
       } catch (e) {
@@ -720,7 +760,11 @@ function CircleRoom({
       }
       peerConnections.current.clear();
       for (const audio of remoteAudios.current.values()) {
-        try { audio.srcObject = null; audio.pause(); } catch {}
+        try {
+          audio.srcObject = null;
+          audio.pause();
+          if (audio.parentNode) audio.parentNode.removeChild(audio);
+        } catch {}
       }
       remoteAudios.current.clear();
     };
@@ -1858,6 +1902,43 @@ export default function App() {
           {notice}
         </div>
       )}
+
+      {/* Top Overlay Banner Notification when someone wants to connect */}
+      {pendingInvites.length > 0 && conn.kind !== "connecting" && conn.kind !== "connected" && (() => {
+        const top = pendingInvites[safeInviteIdx] || pendingInvites[0];
+        return (
+          <aside className="incoming-top-toast" role="alert">
+            <span className="live-dot" style={{ width: 9, height: 9 }} />
+            <div className="incoming-top-toast-text">
+              <strong>{top.nickname || top.city}</strong> wants to connect with you!
+              <small> · {top.city} ({top.match}% resonance)</small>
+            </div>
+            <div className="incoming-top-toast-actions">
+              <button
+                className="top-toast-btn-accept"
+                onClick={() => acceptIncoming(top)}
+              >
+                <Icon name="check" size={13} /> Accept
+              </button>
+              <button
+                className="top-toast-btn-decline"
+                onClick={() => declineIncoming(top)}
+              >
+                <Icon name="close" size={13} /> Decline
+              </button>
+              {pendingInvites.length > 1 && (
+                <button
+                  className="top-toast-btn-next"
+                  onClick={() => setActiveInviteIdx((prev) => (prev + 1) % pendingInvites.length)}
+                  title="Choose next request"
+                >
+                  Next ({safeInviteIdx + 1}/{pendingInvites.length}) <Icon name="arrow" size={11} />
+                </button>
+              )}
+            </div>
+          </aside>
+        );
+      })()}
 
       <header className="topbar">
         <Brand />
