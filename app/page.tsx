@@ -594,8 +594,31 @@ export default function Home() {
     };
   }, [sessionId, phase]);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || !("geolocation" in navigator)) return;
+    const onGeo = (pos: GeolocationPosition) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      setMyLocation({ lat, lng });
+      try {
+        localStorage.setItem("pulse_cached_coords", JSON.stringify({ lat, lng }));
+      } catch {}
+      if (phase === "live" && sessionId) {
+        void join(sessionId, lat, lng, profile).catch(() => {});
+      }
+    };
+    navigator.geolocation.getCurrentPosition(onGeo, () => {}, {
+      enableHighAccuracy: false,
+      timeout: 10_000,
+      maximumAge: 60_000,
+    });
+  }, [phase, sessionId, profile]);
+
   function handleReady(lat: number, lng: number) {
     setMyLocation({ lat, lng });
+    try {
+      localStorage.setItem("pulse_cached_coords", JSON.stringify({ lat, lng }));
+    } catch {}
     setIsAvailable(true);
     setPhase("live"); // enter the map immediately — join fires in background
     void join(sessionId, lat, lng, profile).catch(() => {
@@ -656,6 +679,29 @@ export default function Home() {
     setViewMode("roam");
   }
 
+  function tuneNearestFrequency() {
+    if (connRef.current.kind !== "idle" || activeCircle) return;
+    if (peers.length === 0) {
+      showNotice("Scanning frequencies… You are currently the only pulse online. Open another browser window or share the link to connect!");
+      return;
+    }
+    const available = peers.filter((p) => !p.busy);
+    if (available.length === 0) {
+      showNotice("All active frequencies are currently in calls.");
+      return;
+    }
+    const sorted = [...available].sort((a, b) => {
+      if (!myLocation) return 0;
+      return distanceKm(myLocation, a) - distanceKm(myLocation, b);
+    });
+    const nearest = sorted[0];
+    const dist = myLocation ? Math.round(distanceKm(myLocation, nearest)) : null;
+    const name = nearest.nickname?.trim() || `Pulse-${nearest.id.slice(0, 4).toUpperCase()}`;
+    const distText = dist !== null ? (dist <= 5 ? "nearby" : `${dist.toLocaleString()} km away`) : "detected";
+    showNotice(`Tuned in to frequency ${name} (${distText})! Requesting connection…`);
+    requestConnection(nearest.id);
+  }
+
   function surpriseMe() {
     if (connRef.current.kind !== "idle" || activeCircle) return;
     const candidates = peers.filter((peer) => !peer.busy);
@@ -684,7 +730,12 @@ export default function Home() {
         (peer) => distanceKm(myLocation, peer) <= NEARBY_RADIUS_KM,
       )
     : [];
-  const visiblePeers = viewMode === "nearby" ? nearbyPeers : peers;
+  const visiblePeers =
+    viewMode === "nearby"
+      ? nearbyPeers.length > 0
+        ? nearbyPeers
+        : peers
+      : peers;
 
   return (
     <main className="pulse-workspace">
@@ -701,7 +752,7 @@ export default function Home() {
           <button className={viewMode === "circles" ? "active" : ""} onClick={() => setViewMode("circles")} aria-pressed={viewMode === "circles"}>♧ <span>Circles</span></button>
         </nav>
         <div className="workspace-header-actions">
-          <span className="workspace-frequency"><i>≋</i> Frequency mode</span>
+          <button className="workspace-frequency" onClick={tuneNearestFrequency} title="Tune in to the nearest frequency" aria-label="Tune nearest frequency"><i>≋</i> Frequency mode</button>
           <button className="workspace-surprise" onClick={surpriseMe} disabled={!isAvailable || conn.kind !== "idle" || Boolean(activeCircle)}>✧ <span>Surprise me</span></button>
           <button className="workspace-identity" onClick={() => setIdentityOpen(true)} aria-label="Edit your avatar and nickname">
             <i><span className={`identity-tone-dot tone-${profile.avatarTone}`} /></i>
@@ -728,7 +779,12 @@ export default function Home() {
         <div className="workspace-privacy"><span>⌖</span> Your location is blurred <i /> No account required</div>
       </section>
 
-      <div className="workspace-map-label"><span /> THE WORLD, RIGHT NOW <i /> {visiblePeers.length} PEOPLE {viewMode === "nearby" ? "NEAR YOU" : "ONLINE"}</div>
+      <div className="workspace-map-label">
+        <span /> THE WORLD, RIGHT NOW <i />{" "}
+        {viewMode === "nearby" && nearbyPeers.length === 0 && peers.length > 0
+          ? `${peers.length} PULSES ONLINE · EXPANDING FREQUENCY RADAR`
+          : `${visiblePeers.length} PEOPLE ${viewMode === "nearby" ? "NEAR YOU" : "ONLINE"}`}
+      </div>
       <div className="workspace-map">
         <WorldMap
           peers={visiblePeers}

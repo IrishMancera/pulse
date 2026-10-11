@@ -260,15 +260,32 @@ export default function EntryGate({
   const [btnHovered, setBtnHovered] = useState<boolean>(false);
 
   function enter() {
-    // Enter the app immediately with a default location so there's zero wait.
-    // Then request the real location in the background — the map will update
-    // once the browser resolves it (usually < 1s on WiFi/cell).
-    onReady(40.7128, -74.006);
+    let startLat = 40.7128;
+    let startLng = -74.006;
+    try {
+      const cached = localStorage.getItem("pulse_cached_coords");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (typeof parsed.lat === "number" && typeof parsed.lng === "number") {
+          startLat = parsed.lat;
+          startLng = parsed.lng;
+        }
+      }
+    } catch {}
+
+    onReady(startLat, startLng);
 
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
-        (pos) => onReady(pos.coords.latitude, pos.coords.longitude),
-        () => {/* keep the default */},
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          try {
+            localStorage.setItem("pulse_cached_coords", JSON.stringify({ lat, lng }));
+          } catch {}
+          onReady(lat, lng);
+        },
+        () => {/* keep start coords */},
         { enableHighAccuracy: false, timeout: 5_000, maximumAge: 60_000 },
       );
     }

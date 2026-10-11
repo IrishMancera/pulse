@@ -549,10 +549,15 @@ body {
   border: 1px solid rgba(34, 211, 238, 0.08);
   background: rgba(34, 211, 238, 0.03);
   transition: all 200ms ease;
+  cursor: pointer;
+  font-family: inherit;
+  outline: none;
 }
 .workspace-frequency:hover {
-  border-color: rgba(34, 211, 238, 0.18);
-  background: rgba(34, 211, 238, 0.06);
+  border-color: rgba(34, 211, 238, 0.35);
+  background: rgba(34, 211, 238, 0.1);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.2);
 }
 .workspace-frequency i { color: var(--pulse-cyan); font-size: 15px; font-style: normal; }
 .workspace-surprise {
