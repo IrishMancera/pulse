@@ -1105,3 +1105,118 @@ footer p { margin: 0; text-transform: none; letter-spacing: 0.02em; }
   color: rgba(238, 238, 238, 0.35);
 }
 
+/* Incoming Signals Queue */
+.incoming-queue-container {
+  width: 100%;
+  margin-top: 14px;
+  margin-bottom: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 12px;
+  text-align: left;
+}
+
+.incoming-queue-header {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(238, 238, 238, 0.5);
+  font-weight: 700;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.incoming-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.incoming-queue-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.queue-item-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.queue-item-avatar {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+}
+
+.queue-item-avatar .alien-face {
+  width: 24px;
+  height: 24px;
+}
+
+.queue-item-meta strong {
+  display: block;
+  font-size: 12px;
+  color: #fff;
+}
+
+.queue-item-meta small {
+  display: block;
+  font-size: 10px;
+  color: rgba(238, 238, 238, 0.5);
+}
+
+.queue-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.queue-btn-accept {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: none;
+  background: rgba(8, 203, 0, 0.2);
+  color: var(--green);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.queue-btn-accept:hover {
+  background: var(--green);
+  color: #041402;
+  transform: scale(1.08);
+}
+
+.queue-btn-decline {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: none;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(238, 238, 238, 0.6);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.queue-btn-decline:hover {
+  background: rgba(255, 59, 92, 0.2);
+  color: var(--red);
+  transform: scale(1.08);
+}
+

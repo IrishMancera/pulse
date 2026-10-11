@@ -57,7 +57,6 @@ type Message = {
 type ConnState =
   | { kind: "idle" }
   | { kind: "requesting"; peer: Person }
-  | { kind: "incoming"; peer: Person }
   | { kind: "connecting"; peer: Person }
   | { kind: "connected"; peer: Person };
 
@@ -1374,14 +1373,17 @@ export default function App() {
   const [serendipity, setSerendipity] = useState<"closed" | "scanning" | "found">("closed");
   const [serendipityMatch, setSerendipityMatch] = useState<Person | null>(null);
 
+  // Multi-invite queue — each entry is a peer who sent us a request
+  const [pendingInvites, setPendingInvites] = useState<Person[]>([]);
+
   const peerSessionRef = useRef<PeerSession | null>(null);
   const circleSignalRef = useRef<((sig: SignalMsg) => void) | null>(null);
   const requestTimeoutRef = useRef<number | null>(null);
   const serendipityTimer = useRef<number | null>(null);
 
-  // Incoming signal vibration and radar alert chime loop
+  // Incoming signal vibration and radar alert chime loop (triggers when invite queue becomes non-empty)
   useEffect(() => {
-    if (conn.kind !== "incoming") return;
+    if (pendingInvites.length === 0) return;
 
     playSignalAlert();
     triggerVibrate();
@@ -1392,7 +1394,7 @@ export default function App() {
     }, 2400);
 
     return () => clearInterval(timer);
-  }, [conn.kind]);
+  }, [pendingInvites.length > 0]);
 
   function showNotice(text: string) {
     setNotice(text);
@@ -1510,31 +1512,35 @@ export default function App() {
     const current = connRef.current;
     switch (sig.type) {
       case "request": {
-        if (current.kind === "idle") {
-          let meta: any = null;
-          try {
-            if (sig.payload) meta = JSON.parse(sig.payload);
-          } catch {}
-
-          const fromPeer = peers.find((p) => p.id === sig.fromId) || {
-            id: sig.fromId,
-            city: meta?.city || "A fellow stranger",
-            country: meta?.country || "Earth",
-            distance: meta?.distance || "nearby",
-            lat: meta?.lat || 0,
-            lng: meta?.lng || 0,
-            signal: (meta?.signal as any) || "curious",
-            match: 88,
-            energy: "Warm & spontaneous",
-            tags: meta?.tags || ["online", "ready to talk"],
-            prompt: meta?.prompt || "Say hi!",
-            tone: (meta?.tone as AvatarTone) || "violet",
-            nickname: meta?.nickname || "",
-          };
-          setConn({ kind: "incoming", peer: fromPeer });
-        } else {
+        // If already in a connected/connecting session, auto-decline
+        if (current.kind === "connecting" || current.kind === "connected") {
           void sendSignal(sessionId, sig.fromId, "decline");
+          break;
         }
+        let meta: any = null;
+        try {
+          if (sig.payload) meta = JSON.parse(sig.payload);
+        } catch {}
+
+        const fromPeer = peers.find((p) => p.id === sig.fromId) || {
+          id: sig.fromId,
+          city: meta?.city || "A fellow stranger",
+          country: meta?.country || "Earth",
+          distance: meta?.distance || "nearby",
+          lat: meta?.lat || 0,
+          lng: meta?.lng || 0,
+          signal: (meta?.signal as any) || "curious",
+          match: 88,
+          energy: "Warm & spontaneous",
+          tags: meta?.tags || ["online", "ready to talk"],
+          prompt: meta?.prompt || "Say hi!",
+          tone: (meta?.tone as AvatarTone) || "violet",
+          nickname: meta?.nickname || "",
+        };
+        // Queue the invite (deduplicate same sender)
+        setPendingInvites((prev) =>
+          prev.some((p) => p.id === fromPeer.id) ? prev : [...prev, fromPeer]
+        );
         break;
       }
       case "accept": {
@@ -1560,8 +1566,9 @@ export default function App() {
         break;
       }
       case "end": {
+        setPendingInvites((prev) => prev.filter((p) => p.id !== sig.fromId));
         if (
-          (current.kind === "incoming" || current.kind === "connecting" || current.kind === "connected") &&
+          (current.kind === "connecting" || current.kind === "connected") &&
           current.peer.id === sig.fromId
         ) {
           teardownConnection("Stranger disconnected.");
@@ -1694,18 +1701,25 @@ export default function App() {
     }, 25000);
   }
 
-  function acceptIncoming() {
-    if (conn.kind !== "incoming") return;
-    const caller = conn.peer;
+  function acceptIncoming(inviter?: Person) {
+    const caller = inviter ?? pendingInvites[0];
+    if (!caller) return;
+    // Decline all others in the queue
+    setPendingInvites((prev) => {
+      const rest = prev.filter((p) => p.id !== caller.id);
+      rest.forEach((p) => void sendSignal(sessionId, p.id, "decline"));
+      return [];
+    });
     initPeerSession(caller, false);
     void sendSignal(sessionId, caller.id, "accept");
     setConn({ kind: "connecting", peer: caller });
   }
 
-  function declineIncoming() {
-    if (conn.kind !== "incoming") return;
-    void sendSignal(sessionId, conn.peer.id, "decline");
-    setConn({ kind: "idle" });
+  function declineIncoming(inviter?: Person) {
+    const target = inviter ?? pendingInvites[0];
+    if (!target) return;
+    void sendSignal(sessionId, target.id, "decline");
+    setPendingInvites((prev) => prev.filter((p) => p.id !== target.id));
   }
 
   function sendChatMessage(text: string) {
@@ -1814,7 +1828,7 @@ export default function App() {
   if (!entered) return <Welcome onEnter={handleEnter} />;
 
   return (
-    <main className={`app-shell mode-${mode} ${conn.kind === "incoming" ? "screen-vibrating" : ""}`}>
+    <main className={`app-shell mode-${mode} ${pendingInvites.length > 0 ? "screen-vibrating" : ""}`}>
       <SpatialBackground />
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
@@ -1965,46 +1979,91 @@ export default function App() {
         </div>
       )}
 
-      {/* Incoming Connection Prompt */}
-      {conn.kind === "incoming" && (
-        <div className="incoming-signal-backdrop">
-          <div className="incoming-sonar-ring ring-1" />
-          <div className="incoming-sonar-ring ring-2" />
-          <div className="incoming-sonar-ring ring-3" />
-          <aside className="incoming-signal-card">
-            <div className="incoming-pulse-badge">
-              <span className="live-dot" /> Incoming Signal
-            </div>
-            <div className="person-orb incoming-orb">
-              <AlienFace tone={conn.peer.tone} />
-              <i />
-            </div>
-            <span className="match-label">Frequency Resonance: {conn.peer.match}%</span>
-            <h2>Connect with {conn.peer.nickname ? conn.peer.nickname : conn.peer.city}?</h2>
-            <p className="incoming-location">
-              {conn.peer.city}, {conn.peer.country} · {conn.peer.distance}
-            </p>
-            <div className="incoming-frequency-badge">
-              <span className={`signal-glyph ${conn.peer.signal}`} />
-              <span>{signalCopy[conn.peer.signal]}</span>
-            </div>
-            <blockquote>“{conn.peer.prompt}”</blockquote>
-            <div className="incoming-actions">
-              <button className="incoming-btn-accept" onClick={acceptIncoming}>
-                <Icon name="check" size={18} />
-                Accept
-              </button>
-              <button className="incoming-btn-decline" onClick={declineIncoming}>
-                <Icon name="close" size={18} />
-                Decline
-              </button>
-            </div>
-            <small className="incoming-countdown">
-              <Icon name="lock" size={12} /> Encrypted peer-to-peer · Automatically dissolves if unaccepted
-            </small>
-          </aside>
-        </div>
-      )}
+      {/* Incoming Connection Prompt & Queue */}
+      {pendingInvites.length > 0 && conn.kind !== "connecting" && conn.kind !== "connected" && (() => {
+        const top = pendingInvites[0];
+        const queue = pendingInvites.slice(1);
+        return (
+          <div className="incoming-signal-backdrop">
+            <div className="incoming-sonar-ring ring-1" />
+            <div className="incoming-sonar-ring ring-2" />
+            <div className="incoming-sonar-ring ring-3" />
+            <aside className="incoming-signal-card">
+              <div className="incoming-pulse-badge">
+                <span className="live-dot" /> Incoming Signal {pendingInvites.length > 1 ? `(1 of ${pendingInvites.length})` : ""}
+              </div>
+              <div className="person-orb incoming-orb">
+                <AlienFace tone={top.tone} />
+                <i />
+              </div>
+              <span className="match-label">Frequency Resonance: {top.match}%</span>
+              <h2>Connect with {top.nickname ? top.nickname : top.city}?</h2>
+              <p className="incoming-location">
+                {top.city}, {top.country} · {top.distance}
+              </p>
+              <div className="incoming-frequency-badge">
+                <span className={`signal-glyph ${top.signal}`} />
+                <span>{signalCopy[top.signal as keyof typeof signalCopy] || "Active"}</span>
+              </div>
+              <blockquote>“{top.prompt}”</blockquote>
+              <div className="incoming-actions">
+                <button className="incoming-btn-accept" onClick={() => acceptIncoming(top)}>
+                  <Icon name="check" size={18} />
+                  Accept
+                </button>
+                <button className="incoming-btn-decline" onClick={() => declineIncoming(top)}>
+                  <Icon name="close" size={18} />
+                  Decline
+                </button>
+              </div>
+
+              {/* Waiting list if multiple invites are queued */}
+              {queue.length > 0 && (
+                <div className="incoming-queue-container">
+                  <div className="incoming-queue-header">
+                    <span>Other Waiting Signals ({queue.length})</span>
+                  </div>
+                  <div className="incoming-queue-list">
+                    {queue.map((person) => (
+                      <div key={person.id} className="incoming-queue-item">
+                        <div className="queue-item-info">
+                          <div className="queue-item-avatar">
+                            <AlienFace tone={person.tone} />
+                          </div>
+                          <div className="queue-item-meta">
+                            <strong>{person.nickname || person.city}</strong>
+                            <small>{person.city} · {person.match}% match</small>
+                          </div>
+                        </div>
+                        <div className="queue-item-actions">
+                          <button
+                            className="queue-btn-accept"
+                            title="Accept this connection"
+                            onClick={() => acceptIncoming(person)}
+                          >
+                            <Icon name="check" size={14} />
+                          </button>
+                          <button
+                            className="queue-btn-decline"
+                            title="Decline this signal"
+                            onClick={() => declineIncoming(person)}
+                          >
+                            <Icon name="close" size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <small className="incoming-countdown">
+                <Icon name="lock" size={12} /> Encrypted peer-to-peer · Automatically dissolves if unaccepted
+              </small>
+            </aside>
+          </div>
+        );
+      })()}
 
       {/* Connected Chat & Video Panel */}
       {(conn.kind === "connecting" || conn.kind === "connected") && (
