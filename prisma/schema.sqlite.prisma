@@ -1,0 +1,37 @@
+// Local-only schema for lightweight development. Vercel uses schema.prisma.
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/sqlite"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Presence {
+  id            String   @id
+  lat           Float
+  lng           Float
+  busy          Boolean  @default(false)
+  lastSeen      DateTime
+  avatarTone    String   @default("green")
+  identityMode  String   @default("anonymous")
+  nickname      String?
+  circleId      String?
+  circleKeyword String?
+
+  @@index([lastSeen])
+  @@index([circleId, lastSeen])
+  @@index([circleKeyword, lastSeen])
+}
+
+model Signal {
+  id        String   @id @default(uuid())
+  toId      String
+  fromId    String
+  type      String
+  payload   String?
+  createdAt DateTime @default(now())
+
+  @@index([toId])
+}

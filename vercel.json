@@ -1,4 +1,4 @@
 {
-  "name": "pulse",
-  "framework": "vite"
+  "framework": "nextjs",
+  "buildCommand": "npm run vercel-build"
 }
