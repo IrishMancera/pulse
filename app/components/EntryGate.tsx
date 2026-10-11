@@ -19,9 +19,7 @@ function HoveringAlienMascot({
     >
       {/* Interactive Speech Bubble */}
       <div className="alien-speech-bubble">
-        {status === "locating" ? (
-          <span>Tuning frequency…</span>
-        ) : active ? (
+        {active ? (
           <span>Hop on in, human!</span>
         ) : (
           <span>Beam me in!</span>
