@@ -267,22 +267,18 @@ export default function EntryGate({
 
   function enter() {
     if (!("geolocation" in navigator)) {
-      setStatus("error");
-      setError("Your browser doesn't support location access.");
+      // No geolocation support — use a central fallback location
+      onReady(40.7128, -74.006);
       return;
     }
     setStatus("locating");
     navigator.geolocation.getCurrentPosition(
       (pos) => onReady(pos.coords.latitude, pos.coords.longitude),
-      (err) => {
-        setStatus("error");
-        setError(
-          err.code === err.PERMISSION_DENIED
-            ? "Location permission is required to place you on the map."
-            : "Couldn't get your location. Please try again.",
-        );
+      () => {
+        // Permission denied or error — enter anyway with a fallback location
+        onReady(40.7128, -74.006);
       },
-      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 },
+      { enableHighAccuracy: false, timeout: 5_000, maximumAge: 60_000 },
     );
   }
 
