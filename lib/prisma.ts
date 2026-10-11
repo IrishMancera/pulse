@@ -167,6 +167,48 @@ export function createMemoryClient(): PostgresPrismaClient {
   } as unknown as PostgresPrismaClient;
 }
 
+function createResilientClient(targetClient: PostgresPrismaClient): PostgresPrismaClient {
+  const memoryClient = createMemoryClient();
+  let useFallback = false;
+
+  return new Proxy(targetClient, {
+    get(target, prop, receiver) {
+      if (useFallback) {
+        return Reflect.get(memoryClient, prop);
+      }
+      const model = Reflect.get(target, prop, receiver);
+      if (model && typeof model === "object") {
+        return new Proxy(model, {
+          get(subTarget, subProp, subReceiver) {
+            const originalMethod = Reflect.get(subTarget, subProp, subReceiver);
+            if (typeof originalMethod === "function") {
+              return async (...args: any[]) => {
+                if (useFallback) {
+                  const fallbackModel = (memoryClient as any)[prop];
+                  return fallbackModel[subProp](...args);
+                }
+                try {
+                  return await originalMethod.apply(subTarget, args);
+                } catch (err: any) {
+                  console.warn(
+                    `[Pulse DB Error on ${String(prop)}.${String(subProp)}]: falling back to memory store`,
+                    err?.message || err,
+                  );
+                  useFallback = true;
+                  const fallbackModel = (memoryClient as any)[prop];
+                  return fallbackModel[subProp](...args);
+                }
+              };
+            }
+            return originalMethod;
+          },
+        });
+      }
+      return model;
+    },
+  });
+}
+
 const globalForPrisma = globalThis as unknown as {
   prisma: PostgresPrismaClient | undefined;
 };
@@ -177,25 +219,29 @@ function createClient(): PostgresPrismaClient {
     return createMemoryClient();
   }
 
+  // SQLite files cannot be written to or opened on Vercel's read-only serverless filesystem
+  if (process.env.VERCEL && /^(file:|sqlite:)/i.test(connectionString)) {
+    console.warn("[Pulse] SQLite cannot run on Vercel serverless. Using memory client fallback.");
+    return createMemoryClient();
+  }
+
   const log: Array<"error" | "warn"> =
     process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"];
 
   try {
     if (/^(file:|sqlite:)/i.test(connectionString)) {
       const adapter = new PrismaBetterSqlite3({ url: connectionString });
-      return new SqlitePrismaClient({ adapter, log }) as unknown as PostgresPrismaClient;
+      const client = new SqlitePrismaClient({ adapter, log }) as unknown as PostgresPrismaClient;
+      return createResilientClient(client);
     }
 
     const adapter = new PrismaPg({ connectionString });
-    return new PostgresPrismaClient({ adapter, log });
+    const client = new PostgresPrismaClient({ adapter, log });
+    return createResilientClient(client);
   } catch (err) {
     console.error("[Pulse] Failed to initialize DB client, using memory client:", err);
     return createMemoryClient();
   }
 }
 
-export const prisma = globalForPrisma.prisma ?? createClient();
-
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
-}
+export const prisma = globalForPrisma.prisma ?? (globalForPrisma.prisma = createClient());
