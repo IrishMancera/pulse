@@ -1,7 +1,7 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { join, leave, poll, sendSignal, type PeerDot, type SignalMsg, type SignalType } from "./api";
+import { join, leave, poll, sendSignal, onLocalSignal, type PeerDot, type SignalMsg, type SignalType } from "./api";
 import { ICE_CONFIG, PeerSession, type DescType, type PeerControl } from "./webrtc";
 
 type IconName =
@@ -95,7 +95,7 @@ function identityLabel(identity: UserIdentity) {
     : "Anonymous alien";
 }
 
-function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
+function Icon({ name, size = 18, style }: { name: IconName; size?: number; style?: React.CSSProperties }) {
   const paths: Record<IconName, ReactNode> = {
     arrow: <><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></>,
     camera: <><path d="M14.5 8.5 19 6v12l-4.5-2.5" /><rect x="3" y="6" width="12" height="12" rx="2" /></>,
@@ -119,7 +119,7 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   };
 
   return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <svg style={style} aria-hidden="true" viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       {paths[name]}
     </svg>
   );
@@ -1375,6 +1375,8 @@ export default function App() {
 
   // Multi-invite queue — each entry is a peer who sent us a request
   const [pendingInvites, setPendingInvites] = useState<Person[]>([]);
+  const [activeInviteIdx, setActiveInviteIdx] = useState(0);
+  const safeInviteIdx = pendingInvites.length > 0 ? Math.min(activeInviteIdx, pendingInvites.length - 1) : 0;
 
   const peerSessionRef = useRef<PeerSession | null>(null);
   const circleSignalRef = useRef<((sig: SignalMsg) => void) | null>(null);
@@ -1522,20 +1524,21 @@ export default function App() {
           if (sig.payload) meta = JSON.parse(sig.payload);
         } catch {}
 
-        const fromPeer = peers.find((p) => p.id === sig.fromId) || {
+        const existing = peers.find((p) => p.id === sig.fromId);
+        const fromPeer: Person = {
           id: sig.fromId,
-          city: meta?.city || "A fellow stranger",
-          country: meta?.country || "Earth",
-          distance: meta?.distance || "nearby",
-          lat: meta?.lat || 0,
-          lng: meta?.lng || 0,
-          signal: (meta?.signal as any) || "curious",
-          match: 88,
-          energy: "Warm & spontaneous",
-          tags: meta?.tags || ["online", "ready to talk"],
-          prompt: meta?.prompt || "Say hi!",
-          tone: (meta?.tone as AvatarTone) || "violet",
-          nickname: meta?.nickname || "",
+          city: meta?.city || existing?.city || "A fellow stranger",
+          country: meta?.country || existing?.country || "Earth",
+          distance: existing?.distance || meta?.distance || "nearby",
+          lat: meta?.lat ?? existing?.lat ?? 0,
+          lng: meta?.lng ?? existing?.lng ?? 0,
+          signal: (meta?.signal as any) || existing?.signal || "curious",
+          match: existing?.match || 88,
+          energy: existing?.energy || "Warm & spontaneous",
+          tags: meta?.tags || existing?.tags || ["online", "ready to talk"],
+          prompt: meta?.prompt || existing?.prompt || "Say hi!",
+          tone: (meta?.tone as AvatarTone) || existing?.tone || "violet",
+          nickname: meta?.nickname || existing?.nickname || "",
         };
         // Queue the invite (deduplicate same sender)
         setPendingInvites((prev) =>
@@ -1577,6 +1580,16 @@ export default function App() {
       }
     }
   }
+
+  // Instant cross-window / cross-tab signal receiver
+  useEffect(() => {
+    if (!sessionId) return;
+    return onLocalSignal((sig) => {
+      if (sig.toId === sessionId) {
+        handleSignalMessage(sig);
+      }
+    });
+  }, [sessionId, peers]);
 
   // Polling loop for presence & signaling
   useEffect(() => {
@@ -1702,7 +1715,7 @@ export default function App() {
   }
 
   function acceptIncoming(inviter?: Person) {
-    const caller = inviter ?? pendingInvites[0];
+    const caller = inviter ?? pendingInvites[safeInviteIdx] ?? pendingInvites[0];
     if (!caller) return;
     // Decline all others in the queue
     setPendingInvites((prev) => {
@@ -1710,16 +1723,23 @@ export default function App() {
       rest.forEach((p) => void sendSignal(sessionId, p.id, "decline"));
       return [];
     });
+    setActiveInviteIdx(0);
     initPeerSession(caller, false);
     void sendSignal(sessionId, caller.id, "accept");
     setConn({ kind: "connecting", peer: caller });
   }
 
   function declineIncoming(inviter?: Person) {
-    const target = inviter ?? pendingInvites[0];
+    const target = inviter ?? pendingInvites[safeInviteIdx] ?? pendingInvites[0];
     if (!target) return;
     void sendSignal(sessionId, target.id, "decline");
-    setPendingInvites((prev) => prev.filter((p) => p.id !== target.id));
+    setPendingInvites((prev) => {
+      const updated = prev.filter((p) => p.id !== target.id);
+      if (activeInviteIdx >= updated.length) {
+        setActiveInviteIdx(Math.max(0, updated.length - 1));
+      }
+      return updated;
+    });
   }
 
   function sendChatMessage(text: string) {
@@ -1981,8 +2001,8 @@ export default function App() {
 
       {/* Incoming Connection Prompt & Queue */}
       {pendingInvites.length > 0 && conn.kind !== "connecting" && conn.kind !== "connected" && (() => {
-        const top = pendingInvites[0];
-        const queue = pendingInvites.slice(1);
+        const currentInvite = pendingInvites[safeInviteIdx] || pendingInvites[0];
+        const hasMultiple = pendingInvites.length > 1;
         return (
           <div className="incoming-signal-backdrop">
             <div className="incoming-sonar-ring ring-1" />
@@ -1990,52 +2010,100 @@ export default function App() {
             <div className="incoming-sonar-ring ring-3" />
             <aside className="incoming-signal-card">
               <div className="incoming-pulse-badge">
-                <span className="live-dot" /> Incoming Signal {pendingInvites.length > 1 ? `(1 of ${pendingInvites.length})` : ""}
+                <span className="live-dot" /> Incoming Signal {hasMultiple ? `· (Invite ${safeInviteIdx + 1} of ${pendingInvites.length})` : ""}
               </div>
+
+              {/* Carousel Navigation Bar when multiple invitations are waiting */}
+              {hasMultiple && (
+                <div className="incoming-nav-bar">
+                  <button
+                    className="incoming-nav-btn"
+                    onClick={() => setActiveInviteIdx((prev) => (prev > 0 ? prev - 1 : pendingInvites.length - 1))}
+                    title="View previous invite"
+                  >
+                    <Icon name="arrow" size={13} style={{ transform: "rotate(180deg)" }} />
+                    <span>Prev</span>
+                  </button>
+                  <div className="incoming-nav-dots">
+                    {pendingInvites.map((p, idx) => (
+                      <span
+                        key={p.id}
+                        className={`incoming-dot ${idx === safeInviteIdx ? "active" : ""}`}
+                        title={p.nickname || p.city}
+                        onClick={() => setActiveInviteIdx(idx)}
+                      />
+                    ))}
+                  </div>
+                  <button
+                    className="incoming-nav-btn next-highlight"
+                    onClick={() => setActiveInviteIdx((prev) => (prev + 1) % pendingInvites.length)}
+                    title="Choose next invite"
+                  >
+                    <span>Choose Next</span>
+                    <Icon name="arrow" size={13} />
+                  </button>
+                </div>
+              )}
+
               <div className="person-orb incoming-orb">
-                <AlienFace tone={top.tone} />
+                <AlienFace tone={currentInvite.tone} />
                 <i />
               </div>
-              <span className="match-label">Frequency Resonance: {top.match}%</span>
-              <h2>Connect with {top.nickname ? top.nickname : top.city}?</h2>
+              <span className="match-label">Frequency Resonance: {currentInvite.match}%</span>
+              <h2>Connect with {currentInvite.nickname ? currentInvite.nickname : currentInvite.city}?</h2>
               <p className="incoming-location">
-                {top.city}, {top.country} · {top.distance}
+                {currentInvite.city}, {currentInvite.country} · {currentInvite.distance}
               </p>
               <div className="incoming-frequency-badge">
-                <span className={`signal-glyph ${top.signal}`} />
-                <span>{signalCopy[top.signal as keyof typeof signalCopy] || "Active"}</span>
+                <span className={`signal-glyph ${currentInvite.signal}`} />
+                <span>{signalCopy[currentInvite.signal as keyof typeof signalCopy] || "Active"}</span>
               </div>
-              <blockquote>“{top.prompt}”</blockquote>
+              <blockquote>“{currentInvite.prompt}”</blockquote>
               <div className="incoming-actions">
-                <button className="incoming-btn-accept" onClick={() => acceptIncoming(top)}>
+                <button className="incoming-btn-accept" onClick={() => acceptIncoming(currentInvite)}>
                   <Icon name="check" size={18} />
                   Accept
                 </button>
-                <button className="incoming-btn-decline" onClick={() => declineIncoming(top)}>
+                <button className="incoming-btn-decline" onClick={() => declineIncoming(currentInvite)}>
                   <Icon name="close" size={18} />
                   Decline
                 </button>
+                {hasMultiple && (
+                  <button
+                    className="incoming-btn-next"
+                    title="Cycle to next invite"
+                    onClick={() => setActiveInviteIdx((prev) => (prev + 1) % pendingInvites.length)}
+                  >
+                    <span>Next</span>
+                    <Icon name="arrow" size={14} />
+                  </button>
+                )}
               </div>
 
               {/* Waiting list if multiple invites are queued */}
-              {queue.length > 0 && (
+              {hasMultiple && (
                 <div className="incoming-queue-container">
                   <div className="incoming-queue-header">
-                    <span>Other Waiting Signals ({queue.length})</span>
+                    <span>All Waiting Signals ({pendingInvites.length})</span>
+                    <span style={{ fontSize: "10px", opacity: 0.7 }}>Click to inspect</span>
                   </div>
                   <div className="incoming-queue-list">
-                    {queue.map((person) => (
-                      <div key={person.id} className="incoming-queue-item">
+                    {pendingInvites.map((person, idx) => (
+                      <div
+                        key={person.id}
+                        className={`incoming-queue-item ${idx === safeInviteIdx ? "active-item" : ""}`}
+                        onClick={() => setActiveInviteIdx(idx)}
+                      >
                         <div className="queue-item-info">
                           <div className="queue-item-avatar">
                             <AlienFace tone={person.tone} />
                           </div>
                           <div className="queue-item-meta">
-                            <strong>{person.nickname || person.city}</strong>
+                            <strong>{person.nickname || person.city} {idx === safeInviteIdx ? "★" : ""}</strong>
                             <small>{person.city} · {person.match}% match</small>
                           </div>
                         </div>
-                        <div className="queue-item-actions">
+                        <div className="queue-item-actions" onClick={(e) => e.stopPropagation()}>
                           <button
                             className="queue-btn-accept"
                             title="Accept this connection"

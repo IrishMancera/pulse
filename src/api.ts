@@ -96,12 +96,40 @@ export async function poll(
   return fetchJSON(`/api/poll?${query.toString()}`);
 }
 
+// Shared BroadcastChannel for instant local cross-tab / cross-window signaling
+let localSignalChannel: BroadcastChannel | null = null;
+try {
+  if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
+    localSignalChannel = new BroadcastChannel("pulse_signals");
+  }
+} catch {}
+
+export function onLocalSignal(cb: (sig: SignalMsg) => void): () => void {
+  if (!localSignalChannel) return () => {};
+  const handler = (e: MessageEvent) => {
+    if (e.data && e.data.type) cb(e.data);
+  };
+  localSignalChannel.addEventListener("message", handler);
+  return () => localSignalChannel?.removeEventListener("message", handler);
+}
+
 export async function sendSignal(
   fromId: string,
   toId: string,
   type: SignalType,
   payload?: string | null
 ): Promise<{ ok: boolean; autoDeclined?: boolean }> {
+  try {
+    localSignalChannel?.postMessage({
+      id: crypto.randomUUID(),
+      fromId,
+      toId,
+      type,
+      payload: payload ?? null,
+      createdAt: new Date().toISOString(),
+    });
+  } catch {}
+
   return fetchJSON("/api/signal", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

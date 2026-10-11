@@ -1220,3 +1220,104 @@ footer p { margin: 0; text-transform: none; letter-spacing: 0.02em; }
   transform: scale(1.08);
 }
 
+.incoming-nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  margin-bottom: 14px;
+}
+
+.incoming-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: rgba(238, 238, 238, 0.7);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+
+.incoming-nav-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.incoming-nav-btn.next-highlight {
+  color: #0ce600;
+  background: rgba(8, 203, 0, 0.12);
+  border: 1px solid rgba(8, 203, 0, 0.3);
+}
+
+.incoming-nav-btn.next-highlight:hover {
+  background: rgba(8, 203, 0, 0.22);
+}
+
+.incoming-nav-dots {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.incoming-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.incoming-dot.active {
+  width: 18px;
+  border-radius: 6px;
+  background: #0ce600;
+  box-shadow: 0 0 8px rgba(8, 203, 0, 0.5);
+}
+
+.incoming-btn-next {
+  flex: 0.9;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.incoming-btn-next:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: translateY(-1px);
+}
+
+.incoming-queue-item {
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.incoming-queue-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.incoming-queue-item.active-item {
+  border-color: rgba(8, 203, 0, 0.5);
+  background: rgba(8, 203, 0, 0.1);
+}
+
