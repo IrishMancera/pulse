@@ -1,5 +1,5 @@
 import path from "node:path";
-import { defineConfig, env } from "prisma/config";
+import { defineConfig } from "prisma/config";
 
 // Prisma 7 reads migration/introspection connection details from here (the
 // schema no longer holds a `url`). The Prisma CLI does not auto-load .env, so
@@ -10,10 +10,12 @@ try {
   // .env is optional (e.g. on Vercel where vars are injected directly).
 }
 
+const dbUrl = process.env.DATABASE_URL ?? "file:./dev.db";
+
 export default defineConfig({
   schema: path.join(
     "prisma",
-    /^(file:|sqlite:)/i.test(env("DATABASE_URL"))
+    /^(file:|sqlite:)/i.test(dbUrl)
       ? "schema.sqlite.prisma"
       : "schema.prisma",
   ),
@@ -21,6 +23,6 @@ export default defineConfig({
     path: path.join("prisma", "migrations"),
   },
   datasource: {
-    url: env("DATABASE_URL"),
+    url: dbUrl,
   },
 });

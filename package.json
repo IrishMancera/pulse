@@ -7,7 +7,7 @@
     "db:generate": "npx prisma generate --schema prisma/schema.prisma && npx prisma generate --schema prisma/schema.sqlite.prisma",
     "db:push:local": "npx prisma db push --schema prisma/schema.sqlite.prisma",
     "build": "npm run db:generate && next build",
-    "vercel-build": "npx prisma migrate deploy --schema prisma/schema.prisma && npm run build",
+    "vercel-build": "npm run db:generate && next build",
     "start": "next start",
     "lint": "eslint"
   },
