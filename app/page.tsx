@@ -594,11 +594,14 @@ export default function Home() {
     };
   }, [sessionId, phase]);
 
-  async function handleReady(lat: number, lng: number) {
+  function handleReady(lat: number, lng: number) {
     setMyLocation({ lat, lng });
-    await join(sessionId, lat, lng, profile);
     setIsAvailable(true);
-    setPhase("live");
+    setPhase("live"); // enter the map immediately — join fires in background
+    void join(sessionId, lat, lng, profile).catch(() => {
+      // retry once silently; presence heartbeat will reconcile
+      void join(sessionId, lat, lng, profile).catch(() => {});
+    });
   }
 
   async function handleCircleEnter(mode: "create" | "join" | "random", keyword: string) {

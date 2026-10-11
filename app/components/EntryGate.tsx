@@ -4,17 +4,15 @@ import { useState } from "react";
 
 function HoveringAlienMascot({
   isBtnHovered = false,
-  status = "idle",
 }: {
   isBtnHovered?: boolean;
-  status?: "idle" | "locating" | "error";
 }) {
   const [isSelfHovered, setIsSelfHovered] = useState(false);
   const active = isBtnHovered || isSelfHovered;
 
   return (
     <div
-      className={`hovering-alien-container ${active ? "is-active" : ""} ${status === "locating" ? "is-locating" : ""}`}
+      className={`hovering-alien-container ${active ? "is-active" : ""}`}
       onMouseEnter={() => setIsSelfHovered(true)}
       onMouseLeave={() => setIsSelfHovered(false)}
       aria-hidden="true"
@@ -261,25 +259,21 @@ export default function EntryGate({
 }: {
   onReady: (lat: number, lng: number) => void;
 }) {
-  const [status, setStatus] = useState<"idle" | "locating" | "error">("idle");
-  const [error, setError] = useState<string>("");
   const [btnHovered, setBtnHovered] = useState<boolean>(false);
 
   function enter() {
-    if (!("geolocation" in navigator)) {
-      // No geolocation support — use a central fallback location
-      onReady(40.7128, -74.006);
-      return;
+    // Enter the app immediately with a default location so there's zero wait.
+    // Then request the real location in the background — the map will update
+    // once the browser resolves it (usually < 1s on WiFi/cell).
+    onReady(40.7128, -74.006);
+
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => onReady(pos.coords.latitude, pos.coords.longitude),
+        () => {/* keep the default */},
+        { enableHighAccuracy: false, timeout: 5_000, maximumAge: 60_000 },
+      );
     }
-    setStatus("locating");
-    navigator.geolocation.getCurrentPosition(
-      (pos) => onReady(pos.coords.latitude, pos.coords.longitude),
-      () => {
-        // Permission denied or error — enter anyway with a fallback location
-        onReady(40.7128, -74.006);
-      },
-      { enableHighAccuracy: false, timeout: 5_000, maximumAge: 60_000 },
-    );
   }
 
   return (
@@ -307,22 +301,19 @@ export default function EntryGate({
 
         {/* Enter Pulse Button with Longer & Bigger Hovering Alien */}
         <div className="welcome-enter-container">
-          <HoveringAlienMascot isBtnHovered={btnHovered} status={status} />
+          <HoveringAlienMascot isBtnHovered={btnHovered} />
           <button
             className="welcome-enter"
             onClick={enter}
-            disabled={status === "locating"}
             onMouseEnter={() => setBtnHovered(true)}
             onMouseLeave={() => setBtnHovered(false)}
           >
-            <span>{status === "locating" ? "Tuning your frequency…" : "Enter Pulse ✦"}</span>
-            <i aria-hidden="true">
-              {status === "locating" ? <span className="welcome-loader" /> : "→"}
-            </i>
+            <span>Enter Pulse ✦</span>
+            <i aria-hidden="true">→</i>
           </button>
         </div>
 
-        {status === "error" && <p className="welcome-error" role="alert">{error}</p>}
+
         <div className="welcome-trust">
           <span>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
